@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(echo \"exit: $?\")",
+      "Bash(python -c \"from retrieval_shared.constants import ModelProvider; print\\('ModelProvider:', ModelProvider.GEMMA4\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -c \"from retrieval_shared.exception_handlers import setup_exception_handlers; print\\('exception_handlers OK'\\)\")",
+      "Bash(python -c \"from retrieval_shared.cpu_compat import ensure_compatible_torch; print\\('cpu_compat OK'\\)\")",
+      "Bash(python -c \"from services.eval.src.core.evaluator import compute_dataset_uniqueness, compute_image_uniqueness_score, compute_image_completeness_score, compute_text_uniqueness_score, compute_text_completeness_score; print\\('All evaluator functions OK'\\)\")",
+      "Bash(python -m pytest services/eval/tests/test_evaluate_api.py shared/tests/test_database_singleton.py -v)",
+      "Bash(python -m pytest services/model/tests/test_model_service.py -v)",
+      "Bash(python -c \"from retrieval_shared.constants import SCORE_TABLE_REPO_EFFECTIVENESS, SCORE_TABLE_REPO_TIMELINESS, SCORE_TABLE_REPO_UNIQUENESS, SCORE_TABLE_REPO_INTEGRITY; print\\('Repo score tables:', SCORE_TABLE_REPO_EFFECTIVENESS, SCORE_TABLE_REPO_TIMELINESS, SCORE_TABLE_REPO_UNIQUENESS, SCORE_TABLE_REPO_INTEGRITY\\)\")",
+      "Bash(python -c \"from services.eval.src.prompts.eval_prompts import REPO_EFFECTIVENESS_PROMPT, REPO_TIMELINESS_PROMPT, REPO_INTER_IMAGE_UNIQUENESS_PROMPT, REPO_INTER_IMAGE_CONSISTENCY_PROMPT, REPO_INTER_TEXT_UNIQUENESS_PROMPT, REPO_INTER_TEXT_CONSISTENCY_PROMPT; print\\('All repo prompts loaded'\\)\")",
+      "Bash(python -c \"from retrieval_shared.schemas import RepoScoreRecord, RepoEvaluationResult, EvaluateResultResponse; print\\('All schemas OK'\\)\")",
+      "Bash(python -m pytest services/eval/tests/test_evaluate_api.py services/model/tests/test_model_service.py shared/tests/test_database_singleton.py -v)",
+      "Bash(python -c \"from retrieval_shared.constants import SCORE_TABLE_REPO_ACCURACY, SCORE_TABLE_REPO_CONSISTENCY; print\\('OK:', SCORE_TABLE_REPO_ACCURACY, SCORE_TABLE_REPO_CONSISTENCY\\)\")",
+      "Bash(python -c \"from services.eval.src.prompts.eval_prompts import REPO_IMGSELF_ACCURACY_PROMPT, REPO_TEXTSELF_INTEGRITY_PROMPT; print\\('Prompts OK'\\)\")",
+      "Bash(python -c \"from retrieval_shared.schemas import RepoSelfScoreRecord, RepoEvaluationResult; print\\('Schemas OK'\\)\")",
+      "Bash(python -m pytest services/eval/tests/test_evaluate_api.py shared/tests/ -v)",
+      "Bash(python -m pytest shared/tests/ services/eval/tests/ -x -q)"
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+[project]
+name = "multimodal-retrieval-workspace"
+version = "1.0.0"
+requires-python = ">=3.10, <3.16"
+# 根 workspace 不声明任何 dependencies，各服务自行管理
+dependencies = [
+    "asyncpg>=0.31.0",
+    "celery>=5.6.3",
+    "fastapi>=0.135.3",
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.13.1",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "python-dotenv>=1.2.2",
+    "redis>=5.2.1",
+    "retrieval-shared",
+    "structlog>=24.4.0",
+    "uvicorn>=0.44.0",
+]
+
+[project.optional-dependencies]
+# 一键安装全部服务（开发环境用）
+dev = [
+    "eval-service[dev]",
+    "model-service[dev]",
+]
+
+[tool.uv.workspace]
+members = [
+    "shared",
+    "services/eval",
+    "services/model",
+]
+
+[tool.uv.sources]
+retrieval-shared = { workspace = true }
+eval-service = { workspace = true }
+model-service = { workspace = true }

@@ -1,0 +1,14 @@
+# shared/pyproject.toml
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retrieval-shared"
+version = "1.0.0"
+dependencies = [
+    "setuptools",
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.3,<3",
+    "tqdm>=4.66",
+]

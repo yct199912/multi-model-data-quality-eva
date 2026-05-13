@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY shared/ /app/shared/
+COPY services/eval/ /app/services/eval/
+
+RUN pip install /app/shared/ && \
+    pip install -e "/app/services/eval[dev]"
+
+RUN useradd -m appuser
+USER appuser
+
+CMD ["celery", "-A", "services.eval.src.workers.celery_app", "worker", "-Q", "eval", "--loglevel=info"]
