@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     redis_url: str = Field("redis://localhost:6379/0", alias="REDIS_URL")
 
     # Model server
-    model_server_url: str = Field("http://localhost:8100", alias="MODEL_SERVER_URL")
+    model_server_url: str = Field("http://localhost:18100", alias="MODEL_SERVER_URL")
 
     # Callback (RECALL)
     recall_ip: str = Field("", alias="RECALL_IP")
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     log_level: str = Field("INFO", alias="LOG_LEVEL")
     host: str = Field("0.0.0.0", alias="HOST")
-    port: int = Field(8080, alias="PORT")
+    port: int = Field(18080, alias="PORT")
 
     model_config = {
         "env_file": os.getenv("ENV_FILE", ".env"),

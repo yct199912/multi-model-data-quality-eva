@@ -30,6 +30,6 @@ USER appuser
 EXPOSE 8100
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s \
-    CMD curl -f http://localhost:8100/health || exit 1
+    CMD curl -f http://localhost:18100/health || exit 1
 
 CMD ["python", "-m", "services.model.src.main"]

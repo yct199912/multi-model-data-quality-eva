@@ -28,13 +28,13 @@
 
 ## 服务架构
 
-| 服务 | 端口 | 职责 |
-| --- | --- | --- |
-| eval-service | 8080 | POST API，Gitea 文件遍历，Celery 任务派发 |
-| model-service | 8100 | gemma-4-e4b 模型服务，图/文质量评价 |
-| eval-worker | — | Celery Worker，异步评价执行 |
-| PostgreSQL | 5432 | 评价结果持久化 |
-| Redis | 6379 | Celery Broker |
+| 服务 | 端口    | 职责 |
+| --- |-------| --- |
+| eval-service | 18080 | POST API，Gitea 文件遍历，Celery 任务派发 |
+| model-service | 18100 | gemma-4-e4b 模型服务，图/文质量评价 |
+| eval-worker | —     | Celery Worker，异步评价执行 |
+| PostgreSQL | 5432  | 评价结果持久化 |
+| Redis | 6379  | Celery Broker |
 
 ---
 
