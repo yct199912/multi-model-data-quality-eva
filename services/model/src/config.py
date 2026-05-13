@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     gpu_concurrency: int = Field(2, alias="GPU_CONCURRENCY")
     max_text_chars: int = Field(8000, alias="MAX_TEXT_CHARS")
     host: str = Field("0.0.0.0", alias="HOST")
-    port: int = Field(8100, alias="PORT")
+    port: int = Field(18100, alias="PORT")
 
     model_config = {
         "env_file": os.getenv("ENV_FILE", ".env"),
