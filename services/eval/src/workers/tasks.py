@@ -72,7 +72,7 @@ def _call_model(rule_prompt: str, image_base64: str = None, text_content: str = 
     elif text_content:
         payload["text_content"] = text_content
 
-    with httpx.Client(timeout=120) as client:
+    with httpx.Client(timeout=600) as client:
         resp = client.post(url, json=payload)
         resp.raise_for_status()
         return resp.json()

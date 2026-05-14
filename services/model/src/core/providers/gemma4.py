@@ -6,7 +6,7 @@ import threading
 from .base import BaseEvalProvider
 from ...config import settings
 
-OUTPUT_FORMAT_PROMPT = """请直接返回JSON格式的评分结果，不要重复或解释规则，不要输出其他内容。返回格式：{"score": 0.00, "eva_content": "评价内容"}，score为百分制得分（保留两位小数），eva_content为中文评价说明。"""
+OUTPUT_FORMAT_PROMPT = """请只返回JSON，不要重复规则描述。格式：{"score": 0.00, "eva_content": "评价"}"""
 
 GEMMA4_CHAT_TEMPLATE = (
     "{% for message in messages %}"
@@ -304,10 +304,8 @@ class Gemma4EvalProvider(BaseEvalProvider):
         with torch.no_grad():
             outputs = self._model.generate(
                 **inputs,
-                max_new_tokens=128,
-                do_sample=True,
-                temperature=0.1,
-                top_p=0.9,
+                max_new_tokens=200,
+                do_sample=False,
                 use_cache=True,
             )
 
@@ -319,12 +317,8 @@ class Gemma4EvalProvider(BaseEvalProvider):
     def _parse_json_response(text: str) -> dict:
         """从模型输出中提取 JSON 评分结果。
 
-        模型可能在 JSON 前后附加多余文本，甚至在 eva_content 中
-        重复输出格式说明（含嵌套花括号）。此方法：
-        1. 优先提取 ```json ... ``` 代码块
-        2. 从后往前查找可解析的 {"score": ...} 模式，优先取
-           score 为数字类型的合法 JSON 对象
-        3. 兜底尝试整体解析
+        模型常见问题：(1) 重复规则描述导致 eva_content 中出现嵌套花括号
+        (2) 将分数写成 "99.99分" 而非数字。此方法处理这些情况。
         """
         import json
         import re
@@ -333,12 +327,14 @@ class Gemma4EvalProvider(BaseEvalProvider):
         match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group(1))
+                parsed = json.loads(match.group(1))
+                if isinstance(parsed, dict) and "score" in parsed:
+                    return parsed
             except json.JSONDecodeError:
                 pass
 
-        # 2) 用花括号计数法，从第一个 { 开始找所有候选，
-        #    优先取第一个包含数字 score 的合法 JSON
+        # 2) Brace-counting: find the first valid JSON with a numeric "score" key.
+        #    Scan from each '{' position, find the matching '}', try to parse.
         start = text.find("{")
         while start != -1:
             depth = 0
@@ -352,13 +348,30 @@ class Gemma4EvalProvider(BaseEvalProvider):
                         try:
                             parsed = json.loads(candidate)
                             if isinstance(parsed, dict) and "score" in parsed:
-                                return parsed
+                                score = parsed["score"]
+                                if isinstance(score, (int, float)):
+                                    return parsed
+                                # Handle string scores like "99.99分" or "100"
+                                if isinstance(score, str):
+                                    num_match = re.search(r"[\d.]+", score)
+                                    if num_match:
+                                        parsed["score"] = float(num_match.group())
+                                        return parsed
                         except json.JSONDecodeError:
                             pass
                         break
             start = text.find("{", start + 1)
 
-        # 3) 整体兜底
+        # 3) Last resort: regex extract score and eva_content separately
+        score_match = re.search(r'"score"\s*:\s*([\d.]+)', text)
+        content_match = re.search(r'"eva_content"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if score_match:
+            return {
+                "score": float(score_match.group(1)),
+                "eva_content": content_match.group(1) if content_match else "",
+            }
+
+        # 4) Full text fallback
         try:
             return json.loads(text)
         except (json.JSONDecodeError, AttributeError):
