@@ -6,7 +6,7 @@ import threading
 from .base import BaseEvalProvider
 from ...config import settings
 
-OUTPUT_FORMAT_PROMPT = """请只返回JSON，不要重复规则描述。格式：{"score": 0.00, "eva_content": "评价"}"""
+OUTPUT_FORMAT_PROMPT = """完成之后只返回JSON，不要重复规则和解释。格式：{"score": 分数, "eva_content": "评价"}，分数为0到100的数字，评价用中文简短描述。"""
 
 GEMMA4_CHAT_TEMPLATE = (
     "{% for message in messages %}"
@@ -190,14 +190,25 @@ class Gemma4EvalProvider(BaseEvalProvider):
             self._init_model()
             image_bytes = base64.b64decode(image_base64)
             image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            # Downscale large images to reduce vision encoder processing time.
-            # Max 384px on the longest side preserves evaluation quality while
-            # cutting CPU inference time dramatically.
             max_size = getattr(settings, "max_image_size", 384)
             if max(image.size) > max_size:
                 image.thumbnail((max_size, max_size), Image.LANCZOS)
                 logger.info(f"Resized image to {image.size} for faster inference")
-            return self._run_inference(prompt, images=[image])
+
+            # Use the processor's __call__ with <image> token in text so it
+            # expands soft tokens, computes pixel_values, image_position_ids, etc.
+            processor = self._processor
+            image_token = getattr(processor, "image_token", "<image>")
+            content = f"{image_token}\n{prompt}"
+            rendered = self._render_chat_template(
+                [{"role": "user", "content": content}]
+            )
+            inputs = processor(
+                text=[rendered],
+                images=[image],
+                return_tensors="pt",
+            )
+            return self._generate_from_inputs(inputs)
 
         return await asyncio.to_thread(_eval)
 
@@ -206,7 +217,13 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         def _eval():
             self._init_model()
-            return self._run_inference(full_text)
+            rendered = self._render_chat_template(
+                [{"role": "user", "content": full_text}]
+            )
+            processor = self._processor
+            tokenizer = getattr(processor, "tokenizer", processor)
+            inputs = tokenizer(rendered, return_tensors="pt")
+            return self._generate_from_inputs(inputs)
 
         return await asyncio.to_thread(_eval)
 
@@ -236,64 +253,38 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 json.dump(config, f, ensure_ascii=False, indent=2)
             logger.info(f"Fixed extra_special_tokens in {config_path}: list -> dict")
 
-    def _run_inference(self, prompt: str, images=None) -> str:
-        """Run inference using the processor's built-in __call__ method.
+    def _render_chat_template(self, messages: list) -> str:
+        """Render messages through the Gemma 4 chat template.
 
-        The Gemma4Processor handles image token expansion (<boi><image>*N<eoi>),
-        pixel_values, and all tensor preparation internally via its __call__.
+        Tries the processor's built-in apply_chat_template first; falls back
+        to our bundled GEMMA4_CHAT_TEMPLATE via Jinja2.
+        """
+        processor = self._processor
+
+        # Try the processor's own apply_chat_template
+        if hasattr(processor, "apply_chat_template"):
+            try:
+                rendered = processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True,
+                )
+                return rendered
+            except (ValueError, AttributeError):
+                pass
+
+        # Fallback: render via Jinja2 with our bundled template
+        from jinja2 import Template
+        return Template(GEMMA4_CHAT_TEMPLATE).render(
+            messages=messages, add_generation_prompt=True,
+        )
+
+    def _generate_from_inputs(self, inputs: dict) -> str:
+        """Run model.generate() on prepared inputs and decode the output.
+
+        Strips ignored keys, moves tensors to device, decodes only new tokens.
         """
         import torch
 
         processor = self._processor
-
-        # Use Gemma4Processor.__call__ when images are present — it handles
-        # image token expansion, pixel_values, and num_soft_tokens_per_image
-        # internally. For text-only, use apply_chat_template or manual template.
-        if images and hasattr(processor, "image_processor"):
-            # Build the prompt with the <image> placeholder token
-            image_token = getattr(processor, "image_token", "<image>")
-            boi_token = getattr(processor, "boi_token", "")
-            eoi_token = getattr(processor, "eoi_token", "")
-            chat_template = GEMMA4_CHAT_TEMPLATE
-            # Render the chat template manually so we control the text formatting
-            from jinja2 import Template
-            messages = [
-                {"role": "user", "content": f"{image_token}\n{prompt}"},
-            ]
-            rendered = Template(chat_template).render(
-                messages=messages, add_generation_prompt=True,
-            )
-            inputs = processor(
-                text=[rendered],
-                images=images,
-                return_tensors="pt",
-            )
-        elif hasattr(processor, "apply_chat_template"):
-            try:
-                messages = [{"role": "user", "content": prompt}]
-                inputs = processor.apply_chat_template(
-                    messages,
-                    tokenize=True,
-                    add_generation_prompt=True,
-                    return_dict=True,
-                    return_tensors="pt",
-                )
-            except (ValueError, AttributeError):
-                from jinja2 import Template
-                messages = [{"role": "user", "content": prompt}]
-                rendered = Template(GEMMA4_CHAT_TEMPLATE).render(
-                    messages=messages, add_generation_prompt=True,
-                )
-                tokenizer = getattr(processor, "tokenizer", processor)
-                inputs = tokenizer(rendered, return_tensors="pt")
-        else:
-            from jinja2 import Template
-            messages = [{"role": "user", "content": prompt}]
-            rendered = Template(GEMMA4_CHAT_TEMPLATE).render(
-                messages=messages, add_generation_prompt=True,
-            )
-            tokenizer = getattr(processor, "tokenizer", processor)
-            inputs = tokenizer(rendered, return_tensors="pt")
 
         # Strip keys that model.generate() does not accept
         inputs = {k: v for k, v in inputs.items() if k not in self._IGNORED_INPUT_KEYS}
@@ -304,9 +295,10 @@ class Gemma4EvalProvider(BaseEvalProvider):
         with torch.no_grad():
             outputs = self._model.generate(
                 **inputs,
-                max_new_tokens=200,
+                max_new_tokens=150,
                 do_sample=False,
                 use_cache=True,
+                repetition_penalty=1.2,
             )
 
         input_len = inputs["input_ids"].shape[1]
@@ -322,6 +314,8 @@ class Gemma4EvalProvider(BaseEvalProvider):
         """
         import json
         import re
+
+        logger.debug(f"Raw model output (first 300 chars): {text[:300]}")
 
         # 1) ```json ... ``` 代码块
         match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
