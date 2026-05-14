@@ -43,6 +43,9 @@ async def background_initialization():
     try:
         logging.info(f"Initializing eval provider: {settings.model_name}")
         new_provider = get_eval_provider()
+        # 在后台线程中完成模型加载，避免阻塞事件循环
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, new_provider._init_model)
         state.provider = new_provider
         state.is_ready = True
         state.init_error = None
