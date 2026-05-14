@@ -44,7 +44,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         logger.info(f"Model downloaded to: {model_source}")
 
-        from transformers import AutoTokenizer, AutoProcessor, Gemma3ForConditionalGeneration
+        from transformers import AutoTokenizer, AutoProcessor, AutoModelForCausalLM
         import torch
         import json
 
@@ -76,7 +76,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
         self._processor = processor
 
         logger.info(f"Loading model from {model_source}, dtype={torch_dtype}")
-        self._model = Gemma3ForConditionalGeneration.from_pretrained(
+        self._model = AutoModelForCausalLM.from_pretrained(
             model_source,
             torch_dtype=torch_dtype,
             trust_remote_code=True,
