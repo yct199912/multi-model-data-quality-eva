@@ -15,7 +15,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
     """使用 gemma-4-e4b 模型进行数据质量评价。
 
     模型通过 ModelScope 下载，支持 CPU / GPU / NPU。
-    默认使用 int8 量化加载以降低内存占用（约 4GB）。
+    CPU 模式下使用 int8 动态量化，内存约 4GB。
     """
 
     _init_lock = threading.Lock()
@@ -53,12 +53,9 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         logger.info(f"Model downloaded to: {model_source}")
 
-        from transformers import AutoTokenizer, AutoProcessor, AutoModelForCausalLM, BitsAndBytesConfig
+        from transformers import AutoTokenizer, AutoProcessor, AutoModelForCausalLM
         import torch
         import json
-
-        # int8 量化加载，内存约 4GB（对比 float16 约 8GB）
-        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
 
         # 修复 tokenizer_config.json 中 extra_special_tokens 为 list 时的兼容性问题
         # gemma-4-e4b 模型的 tokenizer_config.json 将 extra_special_tokens 设为 list，
@@ -88,8 +85,12 @@ class Gemma4EvalProvider(BaseEvalProvider):
         logger.info(f"Loading model from {model_source}, quantization=int8")
         self._model = AutoModelForCausalLM.from_pretrained(
             model_source,
-            quantization_config=quantization_config,
+            torch_dtype=torch.float16,
             trust_remote_code=True,
+        ).to(self.device)
+        # CPU 上使用 int8 动态量化减少内存（约 4GB）
+        self._model = torch.quantization.quantize_dynamic(
+            self._model, {torch.nn.Linear}, dtype=torch.qint8,
         )
         self._model.eval()
         self._initialized = True
