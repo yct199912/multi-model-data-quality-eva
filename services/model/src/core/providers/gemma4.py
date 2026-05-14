@@ -8,6 +8,27 @@ from ...config import settings
 
 OUTPUT_FORMAT_PROMPT = """完成之后严格按照以下JSON格式返回结果，不要返回其他任何内容：{"score": 0.00, "eva_content": "..."}，其中score为规则得分(百分制，保留两位小数的数字)，eva_content为相应的评价内容，使用中文描述(字符串)。"""
 
+GEMMA4_CHAT_TEMPLATE = (
+    "{% for message in messages %}"
+    "<start_of_turn>{{ message.role }}\n"
+    "{% if message.content is string %}"
+    "{{ message.content }}\n"
+    "{% else %}"
+    "{% for content in message.content %}"
+    "{% if content.type == 'image' %}"
+    "<image>\n"
+    "{% elif content.type == 'text' %}"
+    "{{ content.text }}\n"
+    "{% endif %}"
+    "{% endfor %}"
+    "{% endif %}"
+    "<end_of_turn>\n"
+    "{% endfor %}"
+    "{% if add_generation_prompt %}"
+    "<start_of_turn>model\n"
+    "{% endif %}"
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -185,13 +206,21 @@ class Gemma4EvalProvider(BaseEvalProvider):
     def _run_inference(self, messages: list) -> str:
         import torch
 
-        inputs = self._processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self.device)
+        processor = self._processor
+
+        if hasattr(processor, "apply_chat_template"):
+            try:
+                inputs = processor.apply_chat_template(
+                    messages,
+                    tokenize=True,
+                    add_generation_prompt=True,
+                    return_dict=True,
+                    return_tensors="pt",
+                ).to(self.device)
+            except (ValueError, AttributeError):
+                inputs = self._apply_manual_chat_template(messages)
+        else:
+            inputs = self._apply_manual_chat_template(messages)
 
         with torch.no_grad():
             outputs = self._model.generate(
@@ -202,7 +231,46 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         input_len = inputs["input_ids"].shape[1]
         generated = outputs[0][input_len:]
-        return self._processor.decode(generated, skip_special_tokens=True)
+        return processor.decode(generated, skip_special_tokens=True)
+
+    def _apply_manual_chat_template(self, messages: list) -> dict:
+        """Manually apply Gemma 4 chat template when the processor lacks one.
+
+        Builds a Jinja2 template string, renders it, then tokenizes the result
+        and prepares the pixel_values / attention_mask tensors for the model.
+        """
+        import torch
+        from jinja2 import Template
+
+        template = Template(GEMMA4_CHAT_TEMPLATE)
+        rendered = template.render(messages=messages, add_generation_prompt=True)
+
+        images = []
+        for msg in messages:
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "image":
+                        images.append(part["image"])
+
+        if images and hasattr(self._processor, "image_processor"):
+            text_inputs = self._processor.tokenizer(
+                rendered, return_tensors="pt", add_special_tokens=False,
+            )
+            image_inputs = self._processor.image_processor(
+                images=images, return_tensors="pt",
+            )
+            inputs = {**text_inputs.to_dict(), **image_inputs.to_dict()}
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        else:
+            raw_processor = self._processor
+            tokenizer = getattr(raw_processor, "tokenizer", raw_processor)
+            inputs = tokenizer(
+                rendered, return_tensors="pt",
+            )
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        return inputs
 
     @staticmethod
     def _parse_json_response(text: str) -> dict:
