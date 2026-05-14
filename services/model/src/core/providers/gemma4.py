@@ -45,11 +45,16 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         from transformers import AutoTokenizer, AutoProcessor, Gemma3ForConditionalGeneration
         import torch
+        import json
 
         torch_dtype = torch.float32 if self.device == "cpu" else torch.float16
 
+        # 修复 tokenizer_config.json 中 extra_special_tokens 为 list 时的兼容性问题
+        # gemma-4-e4b 模型的 tokenizer_config.json 将 extra_special_tokens 设为 list，
+        # 而 transformers<=4.57 的 _set_model_specific_special_tokens 期望 dict
+        self._fix_tokenizer_config(model_source)
+
         logger.info(f"Loading processor from {model_source}")
-        # 优先尝试 AutoProcessor (支持多模态)，失败则回退到 AutoTokenizer (仅文本)
         processor = None
         try:
             processor = AutoProcessor.from_pretrained(model_source, trust_remote_code=True)
@@ -139,6 +144,32 @@ class Gemma4EvalProvider(BaseEvalProvider):
             return self._run_inference(messages)
 
         return await asyncio.to_thread(_eval)
+
+    def _fix_tokenizer_config(self, model_source: str):
+        """修复 gemma-4-e4b 模型 tokenizer_config.json 中 extra_special_tokens 为 list 的兼容性问题。
+
+        transformers<=4.57 的 _set_model_specific_special_tokens 期望 extra_special_tokens 是 dict，
+        但 gemma-4-e4b 模型的 tokenizer_config.json 中该字段为 list，导致 AttributeError: 'list' object has
+        no attribute 'keys'。此处将其转换为 dict 格式。
+        """
+        import os
+
+        config_path = os.path.join(model_source, "tokenizer_config.json")
+        if not os.path.exists(config_path):
+            return
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+
+        extra_tokens = config.get("extra_special_tokens")
+        if isinstance(extra_tokens, list):
+            # 将 list 转为 dict: {"token_0": token_0, "token_1": token_1, ...}
+            config["extra_special_tokens"] = {
+                f"token_{i}": token for i, token in enumerate(extra_tokens)
+            }
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+            logger.info(f"Fixed extra_special_tokens in {config_path}: list -> dict")
 
     def _run_inference(self, messages: list) -> str:
         import torch
