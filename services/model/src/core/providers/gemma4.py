@@ -85,13 +85,19 @@ class Gemma4EvalProvider(BaseEvalProvider):
         logger.info(f"Loading model from {model_source}, quantization=int8")
         self._model = AutoModelForCausalLM.from_pretrained(
             model_source,
-            torch_dtype=torch.float16,
+            dtype=torch.float16,
             trust_remote_code=True,
-        ).to(self.device)
-        # CPU 上使用 int8 动态量化减少内存（约 4GB）
-        self._model = torch.quantization.quantize_dynamic(
-            self._model, {torch.nn.Linear}, dtype=torch.qint8,
         )
+        logger.info("Model loaded, applying int8 dynamic quantization...")
+        # CPU 上使用 int8 动态量化减少内存（约 4GB，对比 float16 约 8GB）
+        try:
+            self._model = torch.quantization.quantize_dynamic(
+                self._model, {torch.nn.Linear}, dtype=torch.qint8,
+            )
+            logger.info("int8 dynamic quantization applied successfully")
+        except Exception as e:
+            logger.warning(f"int8 dynamic quantization failed, falling back to float16: {e}")
+        self._model = self._model.to(self.device)
         self._model.eval()
         self._initialized = True
         logger.info(f"Model {self.model_name} loaded successfully on {self.device}")
