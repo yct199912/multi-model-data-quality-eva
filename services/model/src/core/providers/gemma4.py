@@ -78,7 +78,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
         logger.info(f"Loading model from {model_source}, dtype={torch_dtype}")
         self._model = AutoModelForCausalLM.from_pretrained(
             model_source,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             trust_remote_code=True,
         ).to(self.device)
         self._model.eval()

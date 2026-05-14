@@ -21,7 +21,8 @@
       "Bash(python -m pytest shared/tests/ services/eval/tests/ -x -q)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:pypi.org)",
-      "WebFetch(domain:modelscope.cn)"
+      "WebFetch(domain:modelscope.cn)",
+      "Bash(pip index *)"
     ]
   }
 }
