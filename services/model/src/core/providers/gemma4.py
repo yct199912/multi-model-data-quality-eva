@@ -1,5 +1,6 @@
 # services/model/src/core/providers/gemma4.py
 import asyncio
+import json
 import logging
 from .base import BaseEvalProvider
 from ...config import settings
