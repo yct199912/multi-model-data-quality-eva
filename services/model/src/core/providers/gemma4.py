@@ -103,6 +103,18 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 logger.info("Loaded AutoTokenizer (fast) successfully")
         self._processor = processor
 
+        # Ensure the processor has a chat_template — gemma-4-e4b from ModelScope
+        # may lack one, especially after _fix_tokenizer_config modifies tokenizer_config.json.
+        if hasattr(processor, "apply_chat_template"):
+            try:
+                processor.apply_chat_template([{"role": "user", "content": "test"}], tokenize=False, add_generation_prompt=True)
+            except (ValueError, AttributeError):
+                logger.info("Processor lacks chat_template — injecting Gemma 4 template")
+                if hasattr(processor, "tokenizer"):
+                    processor.tokenizer.chat_template = GEMMA4_CHAT_TEMPLATE
+                else:
+                    processor.chat_template = GEMMA4_CHAT_TEMPLATE
+
         logger.info(f"Loading model from {model_source}")
         self._model = AutoModelForCausalLM.from_pretrained(
             model_source,
@@ -236,38 +248,50 @@ class Gemma4EvalProvider(BaseEvalProvider):
     def _apply_manual_chat_template(self, messages: list) -> dict:
         """Manually apply Gemma 4 chat template when the processor lacks one.
 
-        Builds a Jinja2 template string, renders it, then tokenizes the result
-        and prepares the pixel_values / attention_mask tensors for the model.
+        Renders the Jinja2 template to text, then tokenizes and prepares
+        pixel_values / attention_mask tensors for the model.
         """
         import torch
-        from jinja2 import Template
 
-        template = Template(GEMMA4_CHAT_TEMPLATE)
-        rendered = template.render(messages=messages, add_generation_prompt=True)
+        template_str = GEMMA4_CHAT_TEMPLATE
 
+        # Extract images and build text-only messages for template rendering
         images = []
+        text_messages = []
         for msg in messages:
             content = msg.get("content", [])
+            if isinstance(content, str):
+                text_messages.append(msg)
+                continue
             if isinstance(content, list):
+                text_parts = []
                 for part in content:
-                    if isinstance(part, dict) and part.get("type") == "image":
-                        images.append(part["image"])
+                    if isinstance(part, dict):
+                        if part.get("type") == "image":
+                            images.append(part["image"])
+                            text_parts.append({"type": "text", "text": ""})
+                        elif part.get("type") == "text":
+                            text_parts.append(part)
+                text_messages.append({"role": msg["role"], "content": text_parts if len(text_parts) > 1 else text_parts[0] if text_parts else ""})
+
+        from jinja2 import Template
+        template = Template(template_str)
+        rendered = template.render(messages=text_messages, add_generation_prompt=True)
+
+        # Get the tokenizer — either from a Processor object or standalone
+        tokenizer = getattr(self._processor, "tokenizer", self._processor)
 
         if images and hasattr(self._processor, "image_processor"):
-            text_inputs = self._processor.tokenizer(
-                rendered, return_tensors="pt", add_special_tokens=False,
-            )
-            image_inputs = self._processor.image_processor(
-                images=images, return_tensors="pt",
-            )
-            inputs = {**text_inputs.to_dict(), **image_inputs.to_dict()}
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            text_inputs = tokenizer(rendered, return_tensors="pt", add_special_tokens=False)
+            image_inputs = self._processor.image_processor(images=images, return_tensors="pt")
+            # Merge dicts (both are plain dict-like)
+            inputs = {}
+            for k, v in text_inputs.items():
+                inputs[k] = v.to(self.device)
+            for k, v in image_inputs.items():
+                inputs[k] = v.to(self.device)
         else:
-            raw_processor = self._processor
-            tokenizer = getattr(raw_processor, "tokenizer", raw_processor)
-            inputs = tokenizer(
-                rendered, return_tensors="pt",
-            )
+            inputs = tokenizer(rendered, return_tensors="pt")
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
         return inputs
