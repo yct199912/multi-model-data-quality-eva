@@ -118,12 +118,35 @@ class Gemma4EvalProvider(BaseEvalProvider):
                     processor.chat_template = GEMMA4_CHAT_TEMPLATE
 
         logger.info(f"Loading model from {model_source}")
-        self._model = AutoModelForCausalLM.from_pretrained(
-            model_source,
-            dtype=torch.float16,
-            trust_remote_code=True,
-            low_cpu_mem_usage=True,
-        )
+
+        # gemma-4-e4b is a multimodal vision-language model that must be loaded as
+        # Gemma4ForConditionalGeneration (not Gemma4ForCausalLM) to process images.
+        # Gemma4ForCausalLM is the text-only variant and cannot handle pixel_values.
+        from transformers import AutoModelForCausalLM as _AutoModelForCausalLM
+
+        # Try loading as the multimodal model first (gemma-4 architecture);
+        # fall back to the generic AutoModelForCausalLM if trust_remote_code doesn't
+        # map to Gemma4ForConditionalGeneration.
+        model = None
+        try:
+            from transformers import Gemma4ForConditionalGeneration
+            model = Gemma4ForConditionalGeneration.from_pretrained(
+                model_source,
+                dtype=torch.float16,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+            )
+            logger.info("Loaded model as Gemma4ForConditionalGeneration")
+        except (ImportError, Exception) as e:
+            logger.warning(f"Cannot load as Gemma4ForConditionalGeneration: {e}, falling back to AutoModelForCausalLM")
+            model = _AutoModelForCausalLM.from_pretrained(
+                model_source,
+                dtype=torch.float16,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+            )
+            logger.info("Loaded model as AutoModelForCausalLM")
+        self._model = model
         logger.info("Model loaded successfully, moving to device")
         self._model = self._model.to(self.device)
         self._model.eval()
@@ -287,12 +310,26 @@ class Gemma4EvalProvider(BaseEvalProvider):
         import json
         import re
         try:
+            # Try code-block wrapped JSON first
             match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
             if match:
                 return json.loads(match.group(1))
-            match = re.search(r"\{[^}]+\}", text, re.DOTALL)
-            if match:
-                return json.loads(match.group(0))
+            # Find the outermost { ... } using brace-counting to handle
+            # nested braces inside JSON string values
+            start = text.find("{")
+            if start != -1:
+                depth = 0
+                for i in range(start, len(text)):
+                    if text[i] == "{":
+                        depth += 1
+                    elif text[i] == "}":
+                        depth -= 1
+                        if depth == 0:
+                            candidate = text[start:i + 1]
+                            try:
+                                return json.loads(candidate)
+                            except json.JSONDecodeError:
+                                continue
             return json.loads(text)
         except (json.JSONDecodeError, AttributeError):
             logger.warning(f"Failed to parse model response as JSON: {text[:200]}")
