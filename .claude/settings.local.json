@@ -22,7 +22,10 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:pypi.org)",
       "WebFetch(domain:modelscope.cn)",
-      "Bash(pip index *)"
+      "Bash(pip index *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(pip show *)",
+      "WebFetch(domain:cdn.jsdelivr.net)"
     ]
   }
 }
