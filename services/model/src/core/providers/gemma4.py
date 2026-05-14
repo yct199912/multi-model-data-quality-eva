@@ -49,16 +49,31 @@ class Gemma4EvalProvider(BaseEvalProvider):
         torch_dtype = torch.float32 if self.device == "cpu" else torch.float16
 
         logger.info(f"Loading processor from {model_source}")
+        # 优先尝试 AutoProcessor (支持多模态)，失败则回退到 AutoTokenizer (仅文本)
+        processor = None
         try:
-            self._processor = AutoProcessor.from_pretrained(model_source)
-        except (ValueError, OSError) as e:
+            processor = AutoProcessor.from_pretrained(model_source, trust_remote_code=True)
+            logger.info("Loaded AutoProcessor successfully")
+        except (ValueError, OSError, TypeError) as e:
             logger.warning(f"AutoProcessor failed: {e}, falling back to AutoTokenizer")
-            self._processor = AutoTokenizer.from_pretrained(model_source)
+            try:
+                processor = AutoTokenizer.from_pretrained(
+                    model_source, trust_remote_code=True, use_fast=False,
+                )
+                logger.info("Loaded AutoTokenizer (slow) successfully")
+            except Exception as tokenizer_err:
+                logger.warning(f"AutoTokenizer (slow) also failed: {tokenizer_err}, trying fast tokenizer")
+                processor = AutoTokenizer.from_pretrained(
+                    model_source, trust_remote_code=True,
+                )
+                logger.info("Loaded AutoTokenizer (fast) successfully")
+        self._processor = processor
 
         logger.info(f"Loading model from {model_source}, dtype={torch_dtype}")
         self._model = Gemma3ForConditionalGeneration.from_pretrained(
             model_source,
             torch_dtype=torch_dtype,
+            trust_remote_code=True,
         ).to(self.device)
         self._model.eval()
         self._initialized = True
