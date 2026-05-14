@@ -18,7 +18,10 @@
       "Bash(python -c \"from services.eval.src.prompts.eval_prompts import REPO_IMGSELF_ACCURACY_PROMPT, REPO_TEXTSELF_INTEGRITY_PROMPT; print\\('Prompts OK'\\)\")",
       "Bash(python -c \"from retrieval_shared.schemas import RepoSelfScoreRecord, RepoEvaluationResult; print\\('Schemas OK'\\)\")",
       "Bash(python -m pytest services/eval/tests/test_evaluate_api.py shared/tests/ -v)",
-      "Bash(python -m pytest shared/tests/ services/eval/tests/ -x -q)"
+      "Bash(python -m pytest shared/tests/ services/eval/tests/ -x -q)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:modelscope.cn)"
     ]
   }
 }

@@ -42,13 +42,17 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         logger.info(f"Model downloaded to: {model_source}")
 
-        from transformers import AutoProcessor, Gemma3ForConditionalGeneration
+        from transformers import AutoTokenizer, AutoProcessor, Gemma3ForConditionalGeneration
         import torch
 
         torch_dtype = torch.float32 if self.device == "cpu" else torch.float16
 
         logger.info(f"Loading processor from {model_source}")
-        self._processor = AutoProcessor.from_pretrained(model_source)
+        try:
+            self._processor = AutoProcessor.from_pretrained(model_source)
+        except (ValueError, OSError) as e:
+            logger.warning(f"AutoProcessor failed: {e}, falling back to AutoTokenizer")
+            self._processor = AutoTokenizer.from_pretrained(model_source)
 
         logger.info(f"Loading model from {model_source}, dtype={torch_dtype}")
         self._model = Gemma3ForConditionalGeneration.from_pretrained(
