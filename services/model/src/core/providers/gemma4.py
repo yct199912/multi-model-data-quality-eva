@@ -15,7 +15,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
     """使用 gemma-4-e4b 模型进行数据质量评价。
 
     模型通过 ModelScope 下载，支持 CPU / GPU / NPU。
-    CPU 模式下使用 int8 动态量化，内存约 4GB。
+    使用 float16 精度，约 8GB 内存。
     """
 
     _init_lock = threading.Lock()
@@ -82,25 +82,18 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 logger.info("Loaded AutoTokenizer (fast) successfully")
         self._processor = processor
 
-        logger.info(f"Loading model from {model_source}, quantization=int8")
+        logger.info(f"Loading model from {model_source}")
         self._model = AutoModelForCausalLM.from_pretrained(
             model_source,
             dtype=torch.float16,
             trust_remote_code=True,
+            low_cpu_mem_usage=True,
         )
-        logger.info("Model loaded, applying int8 dynamic quantization...")
-        # CPU 上使用 int8 动态量化减少内存（约 4GB，对比 float16 约 8GB）
-        try:
-            self._model = torch.quantization.quantize_dynamic(
-                self._model, {torch.nn.Linear}, dtype=torch.qint8,
-            )
-            logger.info("int8 dynamic quantization applied successfully")
-        except Exception as e:
-            logger.warning(f"int8 dynamic quantization failed, falling back to float16: {e}")
+        logger.info("Model loaded successfully, moving to device")
         self._model = self._model.to(self.device)
         self._model.eval()
         self._initialized = True
-        logger.info(f"Model {self.model_name} loaded successfully on {self.device}")
+        logger.info(f"Model {self.model_name} loaded successfully on {self.device} (float16, ~8GB)")
 
     def get_model_name(self) -> str:
         return self.model_name
