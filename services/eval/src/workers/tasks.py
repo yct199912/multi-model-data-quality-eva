@@ -214,6 +214,7 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             # --- 准确性 ---
             try:
                 result = _call_model(IMAGE_ACCURACY_PROMPT, image_base64=content_b64)
+                logger.info(result)
                 _insert_score(db, loop, SCORE_TABLE_ACCURACY, repo, file_path,
                               result.get("score", 0), "image", "image-content", result.get("eva_content", ""))
             except Exception as e:
@@ -222,6 +223,7 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             # --- 完整性: 无信息区域 ---
             try:
                 result = _call_model(IMAGE_NOINFO_REGION_PROMPT, image_base64=content_b64)
+                logger.info(result)
                 _insert_score(db, loop, SCORE_TABLE_CONSISTENCY, repo, file_path,
                               result.get("score", 0), "image", "image-noinfo", result.get("eva_content", ""))
             except Exception as e:
@@ -230,6 +232,7 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             # --- 完整性: 无信息噪声 ---
             try:
                 result = _call_model(IMAGE_NOISE_PROMPT, image_base64=content_b64)
+                logger.info(result)
                 _insert_score(db, loop, SCORE_TABLE_CONSISTENCY, repo, file_path,
                               result.get("score", 0), "image", "image-noise", result.get("eva_content", ""))
             except Exception as e:
@@ -238,6 +241,7 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             # --- 唯一性 ---
             try:
                 result = _call_model(IMAGE_UNIQUENESS_PROMPT, image_base64=content_b64)
+                logger.info(result)
                 _insert_score(db, loop, SCORE_TABLE_UNIQUENESS, repo, file_path,
                               result.get("score", 0), "image", "image-content", result.get("eva_content", ""))
             except Exception as e:
@@ -246,6 +250,7 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             # --- 一致性 ---
             try:
                 result = _call_model(IMAGE_CONSISTENCY_PROMPT, image_base64=content_b64)
+                logger.info(result)
                 _insert_score(db, loop, SCORE_TABLE_INTEGRITY, repo, file_path,
                               result.get("score", 0), "image", "image-content", result.get("eva_content", ""))
             except Exception as e:
