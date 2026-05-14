@@ -14,7 +14,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
     """使用 gemma-4-e4b 模型进行数据质量评价。
 
     模型通过 ModelScope 下载，支持 CPU / GPU / NPU。
-    CPU 模式下使用 float32 精度保证兼容性。
+    统一使用 float16 精度以降低内存占用（CPU 约 8GB）。
     """
 
     def __init__(self, model_name: str = None, device: str = None, cache_dir: str = None):
@@ -48,7 +48,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
         import torch
         import json
 
-        torch_dtype = torch.float32 if self.device == "cpu" else torch.float16
+        torch_dtype = torch.float16
 
         # 修复 tokenizer_config.json 中 extra_special_tokens 为 list 时的兼容性问题
         # gemma-4-e4b 模型的 tokenizer_config.json 将 extra_special_tokens 设为 list，

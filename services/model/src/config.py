@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     model_cache_dir: str = Field("/models", alias="MODEL_CACHE_DIR")
     device: str = Field("cpu", alias="DEVICE")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
-    gpu_concurrency: int = Field(2, alias="GPU_CONCURRENCY")
+    gpu_concurrency: int = Field(1, alias="GPU_CONCURRENCY")
     max_text_chars: int = Field(8000, alias="MAX_TEXT_CHARS")
     host: str = Field("0.0.0.0", alias="HOST")
     port: int = Field(18100, alias="PORT")
