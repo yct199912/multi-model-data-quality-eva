@@ -234,6 +234,9 @@ class Gemma4EvalProvider(BaseEvalProvider):
         else:
             inputs = self._apply_manual_chat_template(messages)
 
+        # Strip keys that image_processor adds but model.generate() rejects
+        inputs = {k: v for k, v in inputs.items() if k not in self._IGNORED_INPUT_KEYS}
+
         with torch.no_grad():
             outputs = self._model.generate(
                 **inputs,
@@ -244,6 +247,9 @@ class Gemma4EvalProvider(BaseEvalProvider):
         input_len = inputs["input_ids"].shape[1]
         generated = outputs[0][input_len:]
         return processor.decode(generated, skip_special_tokens=True)
+
+    # Keys produced by image_processor that model.generate() does not accept
+    _IGNORED_INPUT_KEYS = {"num_soft_tokens_per_image"}
 
     def _apply_manual_chat_template(self, messages: list) -> dict:
         """Manually apply Gemma 4 chat template when the processor lacks one.
@@ -284,12 +290,14 @@ class Gemma4EvalProvider(BaseEvalProvider):
         if images and hasattr(self._processor, "image_processor"):
             text_inputs = tokenizer(rendered, return_tensors="pt", add_special_tokens=False)
             image_inputs = self._processor.image_processor(images=images, return_tensors="pt")
-            # Merge dicts (both are plain dict-like)
+            # Merge dicts, stripping keys the model doesn't accept
             inputs = {}
             for k, v in text_inputs.items():
-                inputs[k] = v.to(self.device)
+                if k not in self._IGNORED_INPUT_KEYS:
+                    inputs[k] = v.to(self.device)
             for k, v in image_inputs.items():
-                inputs[k] = v.to(self.device)
+                if k not in self._IGNORED_INPUT_KEYS:
+                    inputs[k] = v.to(self.device)
         else:
             inputs = tokenizer(rendered, return_tensors="pt")
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
