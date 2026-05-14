@@ -24,6 +24,10 @@ dev = [
     "eval-service[dev]",
     "model-service[dev]",
 ]
+# 包含模型推理依赖（Pillow, transformers, modelscope, accelerate, torch）
+model = [
+    "model-service[cpu,gemma4]",
+]
 
 [tool.uv.workspace]
 members = [
