@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     log_level: str = Field("INFO", alias="LOG_LEVEL")
     gpu_concurrency: int = Field(1, alias="GPU_CONCURRENCY")
     max_text_chars: int = Field(8000, alias="MAX_TEXT_CHARS")
+    max_image_size: int = Field(384, alias="MAX_IMAGE_SIZE")
     host: str = Field("0.0.0.0", alias="HOST")
     port: int = Field(18100, alias="PORT")
 

@@ -190,6 +190,13 @@ class Gemma4EvalProvider(BaseEvalProvider):
             self._init_model()
             image_bytes = base64.b64decode(image_base64)
             image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            # Downscale large images to reduce vision encoder processing time.
+            # Max 384px on the longest side preserves evaluation quality while
+            # cutting CPU inference time dramatically.
+            max_size = getattr(settings, "max_image_size", 384)
+            if max(image.size) > max_size:
+                image.thumbnail((max_size, max_size), Image.LANCZOS)
+                logger.info(f"Resized image to {image.size} for faster inference")
             return self._run_inference(prompt, images=[image])
 
         return await asyncio.to_thread(_eval)
@@ -297,8 +304,11 @@ class Gemma4EvalProvider(BaseEvalProvider):
         with torch.no_grad():
             outputs = self._model.generate(
                 **inputs,
-                max_new_tokens=256,
-                do_sample=False,
+                max_new_tokens=128,
+                do_sample=True,
+                temperature=0.1,
+                top_p=0.9,
+                use_cache=True,
             )
 
         input_len = inputs["input_ids"].shape[1]
