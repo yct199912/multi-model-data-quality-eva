@@ -6,7 +6,7 @@ import threading
 from .base import BaseEvalProvider
 from ...config import settings
 
-OUTPUT_FORMAT_PROMPT = """完成之后严格按照以下JSON格式返回结果，不要返回其他任何内容：{"score": 0.00, "eva_content": "..."}，其中score为规则得分(百分制，保留两位小数的数字)，eva_content为相应的评价内容，使用中文描述(字符串)。"""
+OUTPUT_FORMAT_PROMPT = """请直接返回JSON格式的评分结果，不要重复或解释规则，不要输出其他内容。返回格式：{"score": 0.00, "eva_content": "评价内容"}，score为百分制得分（保留两位小数），eva_content为中文评价说明。"""
 
 GEMMA4_CHAT_TEMPLATE = (
     "{% for message in messages %}"
@@ -307,29 +307,49 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
     @staticmethod
     def _parse_json_response(text: str) -> dict:
+        """从模型输出中提取 JSON 评分结果。
+
+        模型可能在 JSON 前后附加多余文本，甚至在 eva_content 中
+        重复输出格式说明（含嵌套花括号）。此方法：
+        1. 优先提取 ```json ... ``` 代码块
+        2. 从后往前查找可解析的 {"score": ...} 模式，优先取
+           score 为数字类型的合法 JSON 对象
+        3. 兜底尝试整体解析
+        """
         import json
         import re
-        try:
-            # Try code-block wrapped JSON first
-            match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
-            if match:
+
+        # 1) ```json ... ``` 代码块
+        match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+        if match:
+            try:
                 return json.loads(match.group(1))
-            # Find the outermost { ... } using brace-counting to handle
-            # nested braces inside JSON string values
-            start = text.find("{")
-            if start != -1:
-                depth = 0
-                for i in range(start, len(text)):
-                    if text[i] == "{":
-                        depth += 1
-                    elif text[i] == "}":
-                        depth -= 1
-                        if depth == 0:
-                            candidate = text[start:i + 1]
-                            try:
-                                return json.loads(candidate)
-                            except json.JSONDecodeError:
-                                continue
+            except json.JSONDecodeError:
+                pass
+
+        # 2) 用花括号计数法，从第一个 { 开始找所有候选，
+        #    优先取第一个包含数字 score 的合法 JSON
+        start = text.find("{")
+        while start != -1:
+            depth = 0
+            for i in range(start, len(text)):
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[start:i + 1]
+                        try:
+                            parsed = json.loads(candidate)
+                            if isinstance(parsed, dict) and "score" in parsed:
+                                return parsed
+                        except json.JSONDecodeError:
+                            pass
+                        break
+            start = text.find("{", start + 1)
+
+        # 3) 整体兜底
+        try:
             return json.loads(text)
         except (json.JSONDecodeError, AttributeError):
             logger.warning(f"Failed to parse model response as JSON: {text[:200]}")
