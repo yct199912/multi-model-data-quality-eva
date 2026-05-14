@@ -297,7 +297,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
         with torch.no_grad():
             outputs = self._model.generate(
                 **inputs,
-                max_new_tokens=512,
+                max_new_tokens=256,
                 do_sample=False,
             )
 
