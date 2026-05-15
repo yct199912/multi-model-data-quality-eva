@@ -80,7 +80,7 @@ async def get_evaluation_result(
         raise HTTPException(status_code=404, detail="Task not found")
 
     task = EvalTask(
-        task_id=task_row["task_id"],
+        task_id=str(task_row["task_id"]),
         user_name=task_row["user_name"],
         repo_name=task_row["repo_name"],
         branch_name=task_row["branch_name"],
@@ -99,7 +99,7 @@ async def get_evaluation_result(
     for r in file_rows:
         file_results.append(EvalFileResult(
             id=r["id"],
-            task_id=r["task_id"],
+            task_id=str(r["task_id"]),
             user_name=r["user_name"],
             repo_name=r["repo_name"],
             file_path=r["file_path"],
@@ -123,7 +123,7 @@ async def get_evaluation_result(
     if agg_row:
         aggregate = EvalAggregateResult(
             id=agg_row["id"],
-            task_id=agg_row["task_id"],
+            task_id=str(agg_row["task_id"]),
             user_name=agg_row["user_name"],
             repo_name=agg_row["repo_name"],
             branch_name=agg_row["branch_name"],
