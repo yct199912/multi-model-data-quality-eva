@@ -121,31 +121,42 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         # gemma-4-e4b is a multimodal vision-language model that must be loaded as
         # Gemma4ForConditionalGeneration (not Gemma4ForCausalLM) to process images.
-        # Gemma4ForCausalLM is the text-only variant and cannot handle pixel_values.
         from transformers import AutoModelForCausalLM as _AutoModelForCausalLM
+        import torch
+
+        # 推理精度优化：CPU 上 float16 通常通过软件模拟，极其缓慢。
+        # 优先使用 bfloat16 (如果 CPU 支持) 或 float32。
+        load_dtype = torch.float16
+        if self.device == "cpu":
+            try:
+                # 检查 CPU 是否支持 bfloat16 运算
+                torch.zeros(1, dtype=torch.bfloat16)
+                load_dtype = torch.bfloat16
+                logger.info("CPU supports bfloat16, using it for faster inference")
+            except Exception:
+                load_dtype = torch.float32
+                logger.info("CPU does not support bfloat16 natively, using float32 (watch memory usage)")
 
         # Try loading as the multimodal model first (gemma-4 architecture);
-        # fall back to the generic AutoModelForCausalLM if trust_remote_code doesn't
-        # map to Gemma4ForConditionalGeneration.
         model = None
         try:
             from transformers import Gemma4ForConditionalGeneration
             model = Gemma4ForConditionalGeneration.from_pretrained(
                 model_source,
-                dtype=torch.float16,
+                torch_dtype=load_dtype,
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,
             )
-            logger.info("Loaded model as Gemma4ForConditionalGeneration")
+            logger.info(f"Loaded model as Gemma4ForConditionalGeneration with {load_dtype}")
         except (ImportError, Exception) as e:
             logger.warning(f"Cannot load as Gemma4ForConditionalGeneration: {e}, falling back to AutoModelForCausalLM")
             model = _AutoModelForCausalLM.from_pretrained(
                 model_source,
-                dtype=torch.float16,
+                torch_dtype=load_dtype,
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,
             )
-            logger.info("Loaded model as AutoModelForCausalLM")
+            logger.info(f"Loaded model as AutoModelForCausalLM with {load_dtype}")
         self._model = model
         logger.info("Model loaded successfully, moving to device")
         self._model = self._model.to(self.device)
@@ -158,9 +169,9 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
     async def evaluate(self, rule_prompt: str, output_format_prompt: str = "",
                        image_base64: str = None, text_content: str = None) -> dict:
-        """评价单维度质量。
+        """评价数据质量。
 
-        返回 {"score": float, "eva_content": str}
+        支持单维度或多维度综合评价。返回解析后的 JSON 字典。
         """
         import asyncio
 
@@ -170,16 +181,22 @@ class Gemma4EvalProvider(BaseEvalProvider):
             result = await self._evaluate_image(image_base64, full_prompt)
         elif text_content:
             truncated = text_content[:settings.max_text_chars]
-            full_text = f"以下是需要评价的文本内容：\n\n{truncated}\n\n{full_prompt}"
+            full_text = f"以下是需要评价的内容：\n\n{truncated}\n\n{full_prompt}"
             result = await self._evaluate_text_inner(full_text)
         else:
             raise ValueError("Must provide either image_base64 or text_content")
 
         parsed = self._parse_json_response(result)
-        return {
-            "score": float(parsed.get("score", 0)),
-            "eva_content": str(parsed.get("eva_content", "")),
-        }
+        # Compatibility: if it's the old single-dimension format, ensure numeric score
+        if "score" in parsed and not isinstance(parsed["score"], (int, float)):
+            try:
+                import re
+                num_match = re.search(r"[\d.]+", str(parsed["score"]))
+                if num_match:
+                    parsed["score"] = float(num_match.group())
+            except Exception:
+                parsed["score"] = 0
+        return parsed
 
     async def _evaluate_image(self, image_base64: str, prompt: str) -> str:
         import base64
@@ -295,7 +312,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
         with torch.no_grad():
             outputs = self._model.generate(
                 **inputs,
-                max_new_tokens=150,
+                max_new_tokens=512,  # Increased for combined JSON
                 do_sample=False,
                 use_cache=True,
                 repetition_penalty=1.2,
@@ -309,39 +326,34 @@ class Gemma4EvalProvider(BaseEvalProvider):
     def _parse_json_response(text: str) -> dict:
         """从模型输出中提取 JSON 评分结果。
 
-        模型常见问题：
-        (1) 输出中文/智能引号（"“”''）而非 ASCII 双引号，导致 JSON 解析失败
-        (2) eva_content 中包含未转义的换行符，导致 JSON 解析失败
-        (3) 将分数写成 "99.99分" 而非数字
-        (4) 重复规则描述导致 eva_content 中出现嵌套花括号
+        增强版：支持多维度嵌套 JSON，更强力地清洗非标准字符。
         """
         import json
         import re
 
+        if not text:
+            return {}
+
         logger.debug(f"Raw model output (first 300 chars): {text[:300]}")
 
-        # Pre-process: normalize Unicode quotation marks to ASCII quotes.
-        # gemma-4-e4b often outputs Chinese/smart quotes: “ ” 「 」 ＂
+        # 1. 预处理：标准化引号、冒号、逗号和空白字符
         cleaned = text
-        for ch in ['“', '”', '「', '」', '＂']:
+        for ch in ['“', '”', '「', '」', '＂', '『', '』']:
             cleaned = cleaned.replace(ch, '"')
-        for ch in ['‘', '’']:
+        for ch in ['‘', '’', '′']:
             cleaned = cleaned.replace(ch, "'")
+        cleaned = cleaned.replace('：', ':').replace('，', ',')
 
-        # Strip other control characters (newlines, tabs) that break JSON strings
-        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', ' ', cleaned)
-
-        # 1) ```json ... ``` 代码块
-        match = re.search(r'```json\s*(.*?)\s*```', cleaned, re.DOTALL)
+        # 2. 尝试提取 Markdown 代码块
+        match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', cleaned, re.DOTALL)
         if match:
             try:
-                parsed = json.loads(match.group(1))
-                if isinstance(parsed, dict) and "score" in parsed:
-                    return parsed
+                candidate = re.sub(r'[\x00-\x1f]', ' ', match.group(1))
+                return json.loads(candidate)
             except json.JSONDecodeError:
-                pass
+                cleaned = match.group(1)
 
-        # 2) Brace-counting: find the first valid JSON with a numeric "score" key.
+        # 3. 寻找最外层的花括号匹配
         start = cleaned.find("{")
         while start != -1:
             depth = 0
@@ -352,25 +364,16 @@ class Gemma4EvalProvider(BaseEvalProvider):
                     depth -= 1
                     if depth == 0:
                         candidate = cleaned[start:i + 1]
+                        candidate_fixed = re.sub(r'[\x00-\x1f]', ' ', candidate)
                         try:
-                            parsed = json.loads(candidate)
-                            if isinstance(parsed, dict) and "score" in parsed:
-                                score = parsed["score"]
-                                if isinstance(score, (int, float)):
-                                    return parsed
-                                if isinstance(score, str):
-                                    num_match = re.search(r"[\d.]+", score)
-                                    if num_match:
-                                        parsed["score"] = float(num_match.group())
-                                        return parsed
+                            return json.loads(candidate_fixed)
                         except json.JSONDecodeError:
                             pass
                         break
             start = cleaned.find("{", start + 1)
 
-        # 3) Regex extract score and eva_content separately
+        # 4. 兜底正则：针对旧的单维度格式
         score_match = re.search(r'"score"\s*:\s*([\d.]+)', cleaned)
-        # Allow eva_content value to contain any chars except unescaped double-quote
         content_match = re.search(r'"eva_content"\s*:\s*"((?:[^"\\]|\\.)*)"', cleaned)
         if score_match:
             return {
@@ -378,9 +381,5 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 "eva_content": content_match.group(1) if content_match else "",
             }
 
-        # 4) Try original text as-is
-        try:
-            return json.loads(text)
-        except (json.JSONDecodeError, AttributeError):
-            logger.warning(f"Failed to parse model response as JSON: {text[:200]}")
-            return {}
+        logger.warning(f"Failed to parse model response as JSON: {text[:200]}")
+        return {}

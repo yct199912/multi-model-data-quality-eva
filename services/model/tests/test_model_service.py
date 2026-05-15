@@ -4,25 +4,37 @@ import pytest
 
 
 class TestJsonParsing:
-    def test_parse_json_with_code_block(self):
+    def test_parse_combined_image_json(self):
         from services.model.src.core.providers.gemma4 import Gemma4EvalProvider
-        text = '```json\n{"image_info_uniqueness": 85.0, "solid_region_score": 90.0}\n```'
+        text = """
+        分析结果如下：
+        {
+          "accuracy": {"score": 90, "eva_content": "准确"},
+          "noinfo": {"score": 85, "eva_content": "无纯色"},
+          "noise": {"score": 80, "eva_content": "低噪声"},
+          "uniqueness": {"score": 75, "eva_content": "内容独特"},
+          "consistency": {"score": 95, "eva_content": "逻辑一致"}
+        }
+        以上是全部评价。
+        """
         result = Gemma4EvalProvider._parse_json_response(text)
-        assert result["image_info_uniqueness"] == 85.0
-        assert result["solid_region_score"] == 90.0
+        assert result["accuracy"]["score"] == 90
+        assert result["noise"]["eva_content"] == "低噪声"
 
-    def test_parse_json_direct(self):
+    def test_parse_combined_text_json_with_unescaped_newline(self):
         from services.model.src.core.providers.gemma4 import Gemma4EvalProvider
-        text = '{"text_info_uniqueness": 70.5, "junk_score": 88.2}'
+        # Raw newline inside eva_content should be handled by fix_control_chars
+        text = '{"format_accuracy": {"score": 100, "eva_content": "包含\n换行符"}}'
         result = Gemma4EvalProvider._parse_json_response(text)
-        assert result["text_info_uniqueness"] == 70.5
-        assert result["junk_score"] == 88.2
+        assert result["format_accuracy"]["score"] == 100
+        # If successfully parsed, it will be "包含 换行符" due to re.sub
+        assert "换行符" in result["format_accuracy"]["eva_content"]
 
-    def test_parse_json_with_surrounding_text(self):
+    def test_parse_json_with_chinese_quotes_and_colon(self):
         from services.model.src.core.providers.gemma4 import Gemma4EvalProvider
-        text = 'Here is the result: {"object_completeness": 92.0, "noise_score": 85.0} end'
+        text = '{“accuracy”：{“score”：90，“eva_content”：“好”}}'
         result = Gemma4EvalProvider._parse_json_response(text)
-        assert result["object_completeness"] == 92.0
+        assert result["accuracy"]["score"] == 90
 
     def test_parse_json_invalid(self):
         from services.model.src.core.providers.gemma4 import Gemma4EvalProvider

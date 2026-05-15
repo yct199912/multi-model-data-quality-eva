@@ -18,6 +18,8 @@ from ..core.gitea_client import GiteaClient
 from ..core.file_classifier import classify_file, is_image_file, is_text_file
 from ..prompts.eval_prompts import (
     OUTPUT_FORMAT_PROMPT,
+    COMBINED_IMAGE_EVAL_PROMPT,
+    COMBINED_TEXT_EVAL_PROMPT,
     # image prompts
     IMAGE_ACCURACY_PROMPT,
     IMAGE_NOINFO_REGION_PROMPT,
@@ -211,50 +213,25 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
 
             file_path = f["path"]
 
-            # --- 准确性 ---
+            # 一键综合评价：将原本 5 次调用合并为 1 次
             try:
-                result = _call_model(IMAGE_ACCURACY_PROMPT, image_base64=content_b64)
-                logger.info(result)
-                _insert_score(db, loop, SCORE_TABLE_ACCURACY, repo, file_path,
-                              result.get("score", 0), "image", "image-content", result.get("eva_content", ""))
+                result = _call_model(COMBINED_IMAGE_EVAL_PROMPT, image_base64=content_b64)
+                logger.debug(f"Combined image result for {file_path}: {result}")
+                
+                # 分维度解析并插入数据库
+                dims = [
+                    ("accuracy", SCORE_TABLE_ACCURACY, "image-content"),
+                    ("noinfo", SCORE_TABLE_CONSISTENCY, "image-noinfo"),
+                    ("noise", SCORE_TABLE_CONSISTENCY, "image-noise"),
+                    ("uniqueness", SCORE_TABLE_UNIQUENESS, "image-content"),
+                    ("consistency", SCORE_TABLE_INTEGRITY, "image-content"),
+                ]
+                for key, table, eva_type in dims:
+                    data = result.get(key, {})
+                    _insert_score(db, loop, table, repo, file_path,
+                                  data.get("score", 0), "image", eva_type, data.get("eva_content", ""))
             except Exception as e:
-                logger.error(f"Image accuracy eval failed for {file_path}: {e}")
-
-            # --- 完整性: 无信息区域 ---
-            try:
-                result = _call_model(IMAGE_NOINFO_REGION_PROMPT, image_base64=content_b64)
-                logger.info(result)
-                _insert_score(db, loop, SCORE_TABLE_CONSISTENCY, repo, file_path,
-                              result.get("score", 0), "image", "image-noinfo", result.get("eva_content", ""))
-            except Exception as e:
-                logger.error(f"Image noinfo eval failed for {file_path}: {e}")
-
-            # --- 完整性: 无信息噪声 ---
-            try:
-                result = _call_model(IMAGE_NOISE_PROMPT, image_base64=content_b64)
-                logger.info(result)
-                _insert_score(db, loop, SCORE_TABLE_CONSISTENCY, repo, file_path,
-                              result.get("score", 0), "image", "image-noise", result.get("eva_content", ""))
-            except Exception as e:
-                logger.error(f"Image noise eval failed for {file_path}: {e}")
-
-            # --- 唯一性 ---
-            try:
-                result = _call_model(IMAGE_UNIQUENESS_PROMPT, image_base64=content_b64)
-                logger.info(result)
-                _insert_score(db, loop, SCORE_TABLE_UNIQUENESS, repo, file_path,
-                              result.get("score", 0), "image", "image-content", result.get("eva_content", ""))
-            except Exception as e:
-                logger.error(f"Image uniqueness eval failed for {file_path}: {e}")
-
-            # --- 一致性 ---
-            try:
-                result = _call_model(IMAGE_CONSISTENCY_PROMPT, image_base64=content_b64)
-                logger.info(result)
-                _insert_score(db, loop, SCORE_TABLE_INTEGRITY, repo, file_path,
-                              result.get("score", 0), "image", "image-content", result.get("eva_content", ""))
-            except Exception as e:
-                logger.error(f"Image consistency eval failed for {file_path}: {e}")
+                logger.error(f"Image combined eval failed for {file_path}: {e}")
 
             evaluated_count += 1
             loop.run_until_complete(
@@ -277,53 +254,25 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
 
             file_path = f["path"]
 
-            # --- 准确性: 文本格式准确性 ---
+            # 一键综合评价：将原本 6 次调用合并为 1 次
             try:
-                result = _call_model(TEXT_FORMAT_ACCURACY_PROMPT, text_content=text_content)
-                _insert_score(db, loop, SCORE_TABLE_ACCURACY, repo, file_path,
-                              result.get("score", 0), "text", "text-format", result.get("eva_content", ""))
+                result = _call_model(COMBINED_TEXT_EVAL_PROMPT, text_content=text_content)
+                logger.debug(f"Combined text result for {file_path}: {result}")
+                
+                dims = [
+                    ("format_accuracy", SCORE_TABLE_ACCURACY, "text-format"),
+                    ("content_accuracy", SCORE_TABLE_ACCURACY, "text-content"),
+                    ("noinfo", SCORE_TABLE_CONSISTENCY, "text-noinfo"),
+                    ("desc_completeness", SCORE_TABLE_CONSISTENCY, "text-desc"),
+                    ("uniqueness", SCORE_TABLE_UNIQUENESS, "text-content"),
+                    ("consistency", SCORE_TABLE_INTEGRITY, "text-content"),
+                ]
+                for key, table, eva_type in dims:
+                    data = result.get(key, {})
+                    _insert_score(db, loop, table, repo, file_path,
+                                  data.get("score", 0), "text", eva_type, data.get("eva_content", ""))
             except Exception as e:
-                logger.error(f"Text format accuracy eval failed for {file_path}: {e}")
-
-            # --- 准确性: 文本内容准确性 ---
-            try:
-                result = _call_model(TEXT_CONTENT_ACCURACY_PROMPT, text_content=text_content)
-                _insert_score(db, loop, SCORE_TABLE_ACCURACY, repo, file_path,
-                              result.get("score", 0), "text", "text-content", result.get("eva_content", ""))
-            except Exception as e:
-                logger.error(f"Text content accuracy eval failed for {file_path}: {e}")
-
-            # --- 完整性: 无信息文本检测 ---
-            try:
-                result = _call_model(TEXT_NOINFO_PROMPT, text_content=text_content)
-                _insert_score(db, loop, SCORE_TABLE_CONSISTENCY, repo, file_path,
-                              result.get("score", 0), "text", "text-noinfo", result.get("eva_content", ""))
-            except Exception as e:
-                logger.error(f"Text noinfo eval failed for {file_path}: {e}")
-
-            # --- 完整性: 描述完整性 ---
-            try:
-                result = _call_model(TEXT_DESC_COMPLETENESS_PROMPT, text_content=text_content)
-                _insert_score(db, loop, SCORE_TABLE_CONSISTENCY, repo, file_path,
-                              result.get("score", 0), "text", "text-desc", result.get("eva_content", ""))
-            except Exception as e:
-                logger.error(f"Text desc completeness eval failed for {file_path}: {e}")
-
-            # --- 唯一性 ---
-            try:
-                result = _call_model(TEXT_UNIQUENESS_PROMPT, text_content=text_content)
-                _insert_score(db, loop, SCORE_TABLE_UNIQUENESS, repo, file_path,
-                              result.get("score", 0), "text", "text-content", result.get("eva_content", ""))
-            except Exception as e:
-                logger.error(f"Text uniqueness eval failed for {file_path}: {e}")
-
-            # --- 一致性 ---
-            try:
-                result = _call_model(TEXT_CONSISTENCY_PROMPT, text_content=text_content)
-                _insert_score(db, loop, SCORE_TABLE_INTEGRITY, repo, file_path,
-                              result.get("score", 0), "text", "text-content", result.get("eva_content", ""))
-            except Exception as e:
-                logger.error(f"Text consistency eval failed for {file_path}: {e}")
+                logger.error(f"Text combined eval failed for {file_path}: {e}")
 
             evaluated_count += 1
             loop.run_until_complete(
