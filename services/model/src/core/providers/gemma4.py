@@ -124,6 +124,27 @@ class Gemma4EvalProvider(BaseEvalProvider):
         from transformers import AutoModelForCausalLM as _AutoModelForCausalLM
         import torch
 
+        # OpenVINO 优化
+        if settings.use_openvino and self.device == "cpu":
+            try:
+                from optimum.intel import OVModelForVisualCausalLM
+                logger.info("Loading model with OpenVINO (Optimum Intel)...")
+                # Note: export=True will convert the model on the fly if needed
+                model = OVModelForVisualCausalLM.from_pretrained(
+                    model_source,
+                    export=True,
+                    trust_remote_code=True,
+                    device="CPU",
+                    # OpenVINO can benefit from weight quantization to INT8 or FP16
+                    ov_config={"PERFORMANCE_HINT": "LATENCY"},
+                )
+                logger.info("Loaded model as OVModelForVisualCausalLM")
+                self._model = model
+                self._initialized = True
+                return
+            except Exception as e:
+                logger.error(f"Failed to load with OpenVINO: {e}. Falling back to standard PyTorch.")
+
         # 推理精度优化：CPU 上 float16 通常通过软件模拟，极其缓慢。
         # 优先使用 bfloat16 (如果 CPU 支持) 或 float32。
         load_dtype = torch.float16

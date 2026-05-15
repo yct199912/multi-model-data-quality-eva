@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     device: str = Field("cpu", alias="DEVICE")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
     gpu_concurrency: int = Field(1, alias="GPU_CONCURRENCY")
+    use_openvino: bool = Field(False, alias="USE_OPENVINO")
     max_text_chars: int = Field(8000, alias="MAX_TEXT_CHARS")
     max_image_size: int = Field(384, alias="MAX_IMAGE_SIZE")
     host: str = Field("0.0.0.0", alias="HOST")
