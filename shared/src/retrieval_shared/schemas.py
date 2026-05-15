@@ -6,7 +6,7 @@ from retrieval_shared.constants import EvalStatus, FileType
 
 class EvaluateRequest(BaseModel):
     """POST /api/v1/evaluate 请求体"""
-    taskId: str = Field(default="", description="外部传入的任务ID")
+    evaluateId: int = Field(default=0, description="外部传入的任务ID")
     userName: str = Field(..., min_length=1, description="Gitea 仓库所有者用户名")
     repoName: str = Field(..., min_length=1, description="数据仓库名称")
     branchName: str = Field(default="master", description="评价分支名称，默认 master")

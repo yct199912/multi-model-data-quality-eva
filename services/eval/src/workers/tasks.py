@@ -83,7 +83,7 @@ def _decode_gitea_content(content_base64: str) -> str:
     return base64.b64decode(content_base64).decode("utf-8", errors="replace")
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
+@celery_app.task(bind=True, max_retries=1, default_retry_delay=30)
 def run_evaluation(self, task_id: str, user_name: str, repo_name: str,
                    branch_name: str, repo_introduction: str):
     """核心评价任务。"""

@@ -34,14 +34,14 @@ async def create_evaluation(
     3. 返回 task_id 供查询
     """
     # 优先使用请求中的 taskId，如果未提供则自动生成
-    task_id = req.taskId or str(uuid.uuid4())
+    task_id = str(uuid.uuid4())
     branch = req.branchName or "master"
 
     try:
         await db.execute(
-            """INSERT INTO eval_tasks (task_id, user_name, repo_name, branch_name, status)
-               VALUES ($1, $2, $3, $4, $5)""",
-            task_id, req.userName, req.repoName, branch, EvalStatus.PENDING.value,
+            """INSERT INTO eval_tasks (task_id, user_name, repo_name, branch_name, status, evaluate_id)
+               VALUES ($1, $2, $3, $4, $5, $6)""",
+            task_id, req.userName, req.repoName, branch, EvalStatus.PENDING.value, req.evaluateId
         )
     except Exception as e:
         logger.error(f"Failed to create eval task: {e}")

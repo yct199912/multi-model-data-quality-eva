@@ -458,6 +458,9 @@ sudo systemctl restart model-service eval-service eval-worker
 | Gitea 文件获取 401 | 检查 `GITEA_TOKEN` 是否有效 |
 | 评价结果全为 0 | model-service 未就绪时 worker 已开始评价，确认 model-service 健康后再发任务 |
 | torch CPU 兼容性警告 | `cpu_compat.py` 会自动检测 AVX2，老 CPU 可能性能较慢但不影响功能 |
+| `Cannot use apply_chat_template` | 模型 processor 缺少 chat_template，代码会自动注入 Gemma 4 模板 |
+| `num_soft_tokens_per_image` not used | 模型推理时自动过滤该参数，无需手动处理 |
+| `Image features and image tokens do not match` | 必须使用 `Gemma4ForConditionalGeneration`（多模态模型），如加载为 `Gemma4ForCausalLM`（纯文本模型）则无法处理图像 |
 
 ---
 
