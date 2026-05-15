@@ -310,20 +310,26 @@ class Gemma4EvalProvider(BaseEvalProvider):
         """从模型输出中提取 JSON 评分结果。
 
         模型常见问题：
-        (1) eva_content 中包含未转义的换行符，导致 JSON 解析失败
-        (2) 将分数写成 "99.99分" 而非数字
-        (3) 重复规则描述导致 eva_content 中出现嵌套花括号
-        此方法处理这些情况。
+        (1) 输出中文/智能引号（"“”''）而非 ASCII 双引号，导致 JSON 解析失败
+        (2) eva_content 中包含未转义的换行符，导致 JSON 解析失败
+        (3) 将分数写成 "99.99分" 而非数字
+        (4) 重复规则描述导致 eva_content 中出现嵌套花括号
         """
         import json
         import re
 
         logger.debug(f"Raw model output (first 300 chars): {text[:300]}")
 
-        # Pre-process: strip control characters (newlines, tabs) that break JSON
-        # inside string values, but preserve structural whitespace between tokens.
-        # Replace \n and \r inside likely-string regions with spaces.
-        cleaned = re.sub(r'[\x00-\x1f]', ' ', text)
+        # Pre-process: normalize Unicode quotation marks to ASCII quotes.
+        # gemma-4-e4b often outputs Chinese/smart quotes: “ ” 「 」 ＂
+        cleaned = text
+        for ch in ['“', '”', '「', '」', '＂']:
+            cleaned = cleaned.replace(ch, '"')
+        for ch in ['‘', '’']:
+            cleaned = cleaned.replace(ch, "'")
+
+        # Strip other control characters (newlines, tabs) that break JSON strings
+        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', ' ', cleaned)
 
         # 1) ```json ... ``` 代码块
         match = re.search(r'```json\s*(.*?)\s*```', cleaned, re.DOTALL)
@@ -336,7 +342,6 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 pass
 
         # 2) Brace-counting: find the first valid JSON with a numeric "score" key.
-        #    Scan from each '{' position, find the matching '}', try to parse.
         start = cleaned.find("{")
         while start != -1:
             depth = 0
@@ -353,7 +358,6 @@ class Gemma4EvalProvider(BaseEvalProvider):
                                 score = parsed["score"]
                                 if isinstance(score, (int, float)):
                                     return parsed
-                                # Handle string scores like "99.99分" or "100"
                                 if isinstance(score, str):
                                     num_match = re.search(r"[\d.]+", score)
                                     if num_match:
@@ -364,9 +368,9 @@ class Gemma4EvalProvider(BaseEvalProvider):
                         break
             start = cleaned.find("{", start + 1)
 
-        # 3) Last resort: regex extract score and eva_content separately
-        #    eva_content may span multiple lines in model output
+        # 3) Regex extract score and eva_content separately
         score_match = re.search(r'"score"\s*:\s*([\d.]+)', cleaned)
+        # Allow eva_content value to contain any chars except unescaped double-quote
         content_match = re.search(r'"eva_content"\s*:\s*"((?:[^"\\]|\\.)*)"', cleaned)
         if score_match:
             return {
