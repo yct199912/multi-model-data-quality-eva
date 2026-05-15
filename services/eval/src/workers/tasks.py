@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import logging
+import os
 import httpx
 from retrieval_shared.constants import (
     FileType, EvalStatus,
@@ -16,6 +17,7 @@ from retrieval_shared.database import Database
 from ..config import settings
 from ..core.gitea_client import GiteaClient
 from ..core.file_classifier import classify_file, is_image_file, is_text_file
+from ..core.document_processor import extract_text_by_extension
 from ..prompts.eval_prompts import (
     OUTPUT_FORMAT_PROMPT,
     COMBINED_IMAGE_EVAL_PROMPT,
@@ -247,12 +249,18 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             if not file_info or not file_info.get("content"):
                 continue
             content_b64 = file_info["content"]
-            try:
-                text_content = _decode_gitea_content(content_b64)
-            except Exception:
-                text_content = base64.b64decode(content_b64).decode("utf-8", errors="replace")
-
             file_path = f["path"]
+            _, ext = os.path.splitext(file_path.lower())
+            
+            # 尝试使用文档处理器提取文本 (docx, xlsx, pptx, pdf)
+            text_content = extract_text_by_extension(ext, base64.b64decode(content_b64))
+            
+            # 如果不是 Office/PDF，则尝试作为纯文本解码
+            if text_content is None:
+                try:
+                    text_content = _decode_gitea_content(content_b64)
+                except Exception:
+                    text_content = base64.b64decode(content_b64).decode("utf-8", errors="replace")
 
             # 一键综合评价：将原本 6 次调用合并为 1 次
             try:
