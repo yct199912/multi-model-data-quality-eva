@@ -119,34 +119,12 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         logger.info(f"Loading model from {model_source}")
 
-        # gemma-4-e4b is a multimodal vision-language model that must be loaded as
-        # Gemma4ForConditionalGeneration (not Gemma4ForCausalLM) to process images.
-        from transformers import AutoModelForCausalLM as _AutoModelForCausalLM
+        # gemma-4-e4b is a multimodal vision-language model.
+        from transformers import AutoModelForConditionalGeneration, AutoModelForCausalLM
         import torch
 
-        # OpenVINO 优化
-        if settings.use_openvino and self.device == "cpu":
-            try:
-                from optimum.intel import OVModelForVisualCausalLM
-                logger.info("Loading model with OpenVINO (Optimum Intel)...")
-                # Note: export=True will convert the model on the fly if needed
-                model = OVModelForVisualCausalLM.from_pretrained(
-                    model_source,
-                    export=True,
-                    trust_remote_code=True,
-                    device="CPU",
-                    # OpenVINO can benefit from weight quantization to INT8 or FP16
-                    ov_config={"PERFORMANCE_HINT": "LATENCY"},
-                )
-                logger.info("Loaded model as OVModelForVisualCausalLM")
-                self._model = model
-                self._initialized = True
-                return
-            except Exception as e:
-                logger.error(f"Failed to load with OpenVINO: {e}. Falling back to standard PyTorch.")
+        logger.info(f"Loading model from {model_source}")
 
-        # 推理精度优化：CPU 上 float16 通常通过软件模拟，极其缓慢。
-        # 优先使用 bfloat16 (如果 CPU 支持) 或 float32。
         load_dtype = torch.float16
         if self.device == "cpu":
             try:
@@ -156,22 +134,20 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 logger.info("CPU supports bfloat16, using it for faster inference")
             except Exception:
                 load_dtype = torch.float32
-                logger.info("CPU does not support bfloat16 natively, using float32 (watch memory usage)")
+                logger.info("CPU does not support bfloat16 natively, using float32")
 
-        # Try loading as the multimodal model first (gemma-4 architecture);
-        model = None
+        # Try loading as the multimodal model first
         try:
-            from transformers import Gemma4ForConditionalGeneration
-            model = Gemma4ForConditionalGeneration.from_pretrained(
+            model = AutoModelForConditionalGeneration.from_pretrained(
                 model_source,
                 torch_dtype=load_dtype,
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,
             )
-            logger.info(f"Loaded model as Gemma4ForConditionalGeneration with {load_dtype}")
-        except (ImportError, Exception) as e:
-            logger.warning(f"Cannot load as Gemma4ForConditionalGeneration: {e}, falling back to AutoModelForCausalLM")
-            model = _AutoModelForCausalLM.from_pretrained(
+            logger.info(f"Loaded model as AutoModelForConditionalGeneration with {load_dtype}")
+        except Exception as e:
+            logger.warning(f"Cannot load as ConditionalGeneration: {e}, falling back to AutoModelForCausalLM")
+            model = AutoModelForCausalLM.from_pretrained(
                 model_source,
                 torch_dtype=load_dtype,
                 trust_remote_code=True,
