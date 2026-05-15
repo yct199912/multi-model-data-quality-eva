@@ -120,10 +120,8 @@ class Gemma4EvalProvider(BaseEvalProvider):
         logger.info(f"Loading model from {model_source}")
 
         # gemma-4-e4b is a multimodal vision-language model.
-        from transformers import AutoModelForConditionalGeneration, AutoModelForCausalLM
+        from transformers import AutoModel, AutoModelForCausalLM
         import torch
-
-        logger.info(f"Loading model from {model_source}")
 
         load_dtype = torch.float16
         if self.device == "cpu":
@@ -138,15 +136,15 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         # Try loading as the multimodal model first
         try:
-            model = AutoModelForConditionalGeneration.from_pretrained(
+            model = AutoModel.from_pretrained(
                 model_source,
                 torch_dtype=load_dtype,
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,
             )
-            logger.info(f"Loaded model as AutoModelForConditionalGeneration with {load_dtype}")
+            logger.info(f"Loaded model as AutoModel with {load_dtype}")
         except Exception as e:
-            logger.warning(f"Cannot load as ConditionalGeneration: {e}, falling back to AutoModelForCausalLM")
+            logger.warning(f"Cannot load as AutoModel: {e}, falling back to AutoModelForCausalLM")
             model = AutoModelForCausalLM.from_pretrained(
                 model_source,
                 torch_dtype=load_dtype,
