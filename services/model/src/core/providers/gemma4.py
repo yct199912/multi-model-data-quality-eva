@@ -187,6 +187,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
             raise ValueError("Must provide either image_base64 or text_content")
 
         parsed = self._parse_json_response(result)
+        logger.info(f"Parsed JSON result: {parsed}")
         # Compatibility: if it's the old single-dimension format, ensure numeric score
         if "score" in parsed and not isinstance(parsed["score"], (int, float)):
             try:
@@ -320,7 +321,9 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         input_len = inputs["input_ids"].shape[1]
         generated = outputs[0][input_len:]
-        return processor.decode(generated, skip_special_tokens=True)
+        decoded = processor.decode(generated, skip_special_tokens=True)
+        logger.info(f"Raw model output: {decoded}")
+        return decoded
 
     @staticmethod
     def _parse_json_response(text: str) -> dict:
