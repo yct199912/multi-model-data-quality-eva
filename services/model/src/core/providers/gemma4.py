@@ -309,16 +309,24 @@ class Gemma4EvalProvider(BaseEvalProvider):
     def _parse_json_response(text: str) -> dict:
         """从模型输出中提取 JSON 评分结果。
 
-        模型常见问题：(1) 重复规则描述导致 eva_content 中出现嵌套花括号
-        (2) 将分数写成 "99.99分" 而非数字。此方法处理这些情况。
+        模型常见问题：
+        (1) eva_content 中包含未转义的换行符，导致 JSON 解析失败
+        (2) 将分数写成 "99.99分" 而非数字
+        (3) 重复规则描述导致 eva_content 中出现嵌套花括号
+        此方法处理这些情况。
         """
         import json
         import re
 
         logger.debug(f"Raw model output (first 300 chars): {text[:300]}")
 
+        # Pre-process: strip control characters (newlines, tabs) that break JSON
+        # inside string values, but preserve structural whitespace between tokens.
+        # Replace \n and \r inside likely-string regions with spaces.
+        cleaned = re.sub(r'[\x00-\x1f]', ' ', text)
+
         # 1) ```json ... ``` 代码块
-        match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+        match = re.search(r'```json\s*(.*?)\s*```', cleaned, re.DOTALL)
         if match:
             try:
                 parsed = json.loads(match.group(1))
@@ -329,16 +337,16 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         # 2) Brace-counting: find the first valid JSON with a numeric "score" key.
         #    Scan from each '{' position, find the matching '}', try to parse.
-        start = text.find("{")
+        start = cleaned.find("{")
         while start != -1:
             depth = 0
-            for i in range(start, len(text)):
-                if text[i] == "{":
+            for i in range(start, len(cleaned)):
+                if cleaned[i] == "{":
                     depth += 1
-                elif text[i] == "}":
+                elif cleaned[i] == "}":
                     depth -= 1
                     if depth == 0:
-                        candidate = text[start:i + 1]
+                        candidate = cleaned[start:i + 1]
                         try:
                             parsed = json.loads(candidate)
                             if isinstance(parsed, dict) and "score" in parsed:
@@ -354,18 +362,19 @@ class Gemma4EvalProvider(BaseEvalProvider):
                         except json.JSONDecodeError:
                             pass
                         break
-            start = text.find("{", start + 1)
+            start = cleaned.find("{", start + 1)
 
         # 3) Last resort: regex extract score and eva_content separately
-        score_match = re.search(r'"score"\s*:\s*([\d.]+)', text)
-        content_match = re.search(r'"eva_content"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        #    eva_content may span multiple lines in model output
+        score_match = re.search(r'"score"\s*:\s*([\d.]+)', cleaned)
+        content_match = re.search(r'"eva_content"\s*:\s*"((?:[^"\\]|\\.)*)"', cleaned)
         if score_match:
             return {
                 "score": float(score_match.group(1)),
                 "eva_content": content_match.group(1) if content_match else "",
             }
 
-        # 4) Full text fallback
+        # 4) Try original text as-is
         try:
             return json.loads(text)
         except (json.JSONDecodeError, AttributeError):

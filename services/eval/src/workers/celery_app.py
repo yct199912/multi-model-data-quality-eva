@@ -13,8 +13,8 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    visibility_timeout=3600,
+    visibility_timeout=7200,
     task_serializer="json",
     result_serializer="json",
-    worker_concurrency=settings.celery_worker_concurrency,
+    worker_concurrency=1,
 )
