@@ -225,19 +225,24 @@ class Gemma4EvalProvider(BaseEvalProvider):
                     img.thumbnail((max_size, max_size), Image.LANCZOS)
                 frames.append(img)
 
-            # Use the processor's __call__ with <video> token
-            processor = self._processor
-            video_token = getattr(processor, "video_token", "<video>")
-            content = f"{video_token}\n{prompt}"
-            rendered = self._render_chat_template(
-                [{"role": "user", "content": content}]
-            )
+            # Structured multimodal content
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "video"},
+                        {"type": "text", "text": prompt}
+                    ]
+                }
+            ]
+            rendered = self._render_chat_template(messages)
             
+            processor = self._processor
             # gemma-4-e4b 处理器通常支持 videos 参数
             try:
                 inputs = processor(
                     text=[rendered],
-                    videos=[frames],  # 嵌套以匹配 batch 维度
+                    videos=[frames],
                     return_tensors="pt",
                 )
             except (TypeError, ValueError) as e:
@@ -265,14 +270,19 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 image.thumbnail((max_size, max_size), Image.LANCZOS)
                 logger.info(f"Resized image to {image.size} for faster inference")
 
-            # Use the processor's __call__ with <image> token in text so it
-            # expands soft tokens, computes pixel_values, image_position_ids, etc.
+            # Structured multimodal content
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image"},
+                        {"type": "text", "text": prompt}
+                    ]
+                }
+            ]
+            rendered = self._render_chat_template(messages)
+            
             processor = self._processor
-            image_token = getattr(processor, "image_token", "<image>")
-            content = f"{image_token}\n{prompt}"
-            rendered = self._render_chat_template(
-                [{"role": "user", "content": content}]
-            )
             inputs = processor(
                 text=[rendered],
                 images=[image],
