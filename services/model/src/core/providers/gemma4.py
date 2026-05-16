@@ -265,7 +265,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
             full_prompt = f"{image_token}\n{prompt}"
             
             rendered = self._render_chat_template([{"role": "user", "content": full_prompt}])
-            logger.info(f"Rendered prompt: {rendered}")
+            logger.info(f"Rendered prompt: {repr(rendered)}")
             
             inputs = processor(
                 text=[rendered],
@@ -356,28 +356,21 @@ class Gemma4EvalProvider(BaseEvalProvider):
             logger.info(f"Fixed extra_special_tokens in {config_path}: list -> dict")
 
     def _render_chat_template(self, messages: list) -> str:
-        """Render messages through the Gemma 4 chat template.
-
-        Tries the processor's built-in apply_chat_template first; falls back
-        to our bundled GEMMA4_CHAT_TEMPLATE via Jinja2.
-        """
-        processor = self._processor
-
-        # Try the processor's own apply_chat_template
-        if hasattr(processor, "apply_chat_template"):
-            try:
-                rendered = processor.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True,
-                )
-                return rendered
-            except (ValueError, AttributeError):
-                pass
-
-        # Fallback: render via Jinja2 with our bundled template
+        """Render messages through the Gemma 4 chat template."""
         from jinja2 import Template
-        return Template(GEMMA4_CHAT_TEMPLATE).render(
+        
+        # 强制使用我们定义的模板，确保一致性
+        template_str = GEMMA4_CHAT_TEMPLATE
+        
+        # 检查是否有 bos_token
+        bos = ""
+        if hasattr(self._processor, "tokenizer") and self._processor.tokenizer.bos_token:
+            bos = self._processor.tokenizer.bos_token
+        
+        rendered = Template(template_str).render(
             messages=messages, add_generation_prompt=True,
         )
+        return bos + rendered
 
     def _generate_from_inputs(self, inputs: dict, is_tokenized: bool = False) -> str:
         """Run model.generate() on prepared inputs and decode the output.
