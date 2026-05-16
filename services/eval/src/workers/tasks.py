@@ -16,12 +16,13 @@ from retrieval_shared.constants import (
 from retrieval_shared.database import Database
 from ..config import settings
 from ..core.gitea_client import GiteaClient
-from ..core.file_classifier import classify_file, is_image_file, is_text_file
-from ..core.document_processor import extract_text_by_extension
+from ..core.file_classifier import classify_file, is_image_file, is_text_file, is_video_file
+from ..core.document_processor import extract_text_by_extension, extract_frames_from_video
 from ..prompts.eval_prompts import (
     OUTPUT_FORMAT_PROMPT,
     COMBINED_IMAGE_EVAL_PROMPT,
     COMBINED_TEXT_EVAL_PROMPT,
+    COMBINED_VIDEO_EVAL_PROMPT,
     # image prompts
     IMAGE_ACCURACY_PROMPT,
     IMAGE_NOINFO_REGION_PROMPT,
@@ -64,7 +65,7 @@ def _get_db():
     return Database(settings.postgres_dsn)
 
 
-def _call_model(rule_prompt: str, image_base64: str = None, text_content: str = None) -> dict:
+def _call_model(rule_prompt: str, image_base64: str = None, text_content: str = None, video_frames: list = None) -> dict:
     """调用模型服务进行单维度评价。"""
     url = f"{settings.model_server_url}/api/v1/evaluate"
     payload = {
@@ -75,6 +76,8 @@ def _call_model(rule_prompt: str, image_base64: str = None, text_content: str = 
         payload["image_base64"] = image_base64
     elif text_content:
         payload["text_content"] = text_content
+    elif video_frames:
+        payload["video_frames"] = video_frames
 
     with httpx.Client(timeout=httpx.Timeout(connect=30, read=1200, write=30, pool=30)) as client:
         resp = client.post(url, json=payload)
@@ -199,7 +202,8 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
     # 2. 按类型分类
     image_files = [f for f in all_files if is_image_file(f["path"])]
     text_files = [f for f in all_files if is_text_file(f["path"])]
-    total_count = len(image_files) + len(text_files)
+    video_files = [f for f in all_files if is_video_file(f["path"])]
+    total_count = len(image_files) + len(text_files) + len(video_files)
     loop.run_until_complete(
         db.execute("UPDATE eval_tasks SET total_files=$1 WHERE task_id=$2", total_count, task_id)
     )
@@ -207,6 +211,7 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
     evaluated_count = 0
 
     # 3. 评价图像文件
+    # ... (rest of image processing)
     for f in image_files:
         try:
             content_b64 = gitea.download_file(user_name, repo_name, f["path"], branch_name)
@@ -289,10 +294,49 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
         except Exception as e:
             logger.error(f"Error processing text {f['path']}: {e}")
 
-    # 5. 仓库级评价
+    # 5. 评价视频文件
+    for f in video_files:
+        try:
+            content_b64 = gitea.download_file(user_name, repo_name, f["path"], branch_name)
+            if not content_b64:
+                continue
+            
+            file_path = f["path"]
+            # 抽帧 (默认 8 帧)
+            frames = extract_frames_from_video(base64.b64decode(content_b64))
+            if not frames:
+                logger.warning(f"No frames extracted for video {file_path}")
+                continue
+
+            # 一键综合评价
+            try:
+                result = _call_model(COMBINED_VIDEO_EVAL_PROMPT, video_frames=frames)
+                logger.debug(f"Combined video result for {file_path}: {result}")
+                
+                dims = [
+                    ("temporal_consistency", SCORE_TABLE_CONSISTENCY, "video-temporal"),
+                    ("visual_quality", SCORE_TABLE_CONSISTENCY, "video-visual"),
+                    ("content_accuracy", SCORE_TABLE_ACCURACY, "video-content"),
+                    ("redundancy", SCORE_TABLE_UNIQUENESS, "video-content"),
+                ]
+                for key, table, eva_type in dims:
+                    data = result.get(key, {})
+                    _insert_score(db, loop, table, repo, file_path,
+                                  data.get("score", 0), "video", eva_type, data.get("eva_content", ""))
+            except Exception as e:
+                logger.error(f"Video combined eval failed for {file_path}: {e}")
+
+            evaluated_count += 1
+            loop.run_until_complete(
+                db.execute("UPDATE eval_tasks SET evaluated_files=$1 WHERE task_id=$2", evaluated_count, task_id)
+            )
+        except Exception as e:
+            logger.error(f"Error processing video {f['path']}: {e}")
+
+    # 6. 仓库级评价
     _do_repo_evaluation(db, loop, repo, repo_introduction, image_files, text_files)
 
-    logger.info(f"Evaluation task {task_id} completed: {len(image_files)} images, {len(text_files)} texts")
+    logger.info(f"Evaluation task {task_id} completed: {len(image_files)} images, {len(text_files)} texts, {len(video_files)} videos")
 
 
 def _do_repo_evaluation(db, loop, repo, repo_introduction, image_files, text_files):

@@ -99,6 +99,7 @@ class ModelEvalRequest(BaseModel):
     output_format_prompt: str = Field(default="", description="输出格式提示词")
     image_base64: Optional[str] = Field(default=None, description="Base64 编码的图像数据")
     text_content: Optional[str] = Field(default=None, description="文本内容")
+    video_frames: Optional[list[str]] = Field(default=None, description="Base64 编码的视频帧列表")
 
 
 class ModelEvalResponse(BaseModel):

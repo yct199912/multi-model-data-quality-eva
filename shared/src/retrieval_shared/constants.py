@@ -6,6 +6,7 @@ import os
 class FileType(str, Enum):
     IMAGE = "image"
     TEXT = "text"
+    VIDEO = "video"
     UNKNOWN = "unknown"
 
 
@@ -55,10 +56,15 @@ MIME_TO_FILE_TYPE = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": FileType.TEXT,
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": FileType.TEXT,
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": FileType.TEXT,
-}
+    # Video
+    "video/mp4":       FileType.VIDEO,
+    "video/x-msvideo": FileType.VIDEO,
+    "video/quicktime": FileType.VIDEO,
+    "video/x-matroska": FileType.VIDEO,
+    }
 
-# File extension → FileType (fallback when MIME not available)
-EXT_TO_FILE_TYPE = {
+    # File extension → FileType (fallback when MIME not available)
+    EXT_TO_FILE_TYPE = {
     ".jpg":  FileType.IMAGE, ".jpeg": FileType.IMAGE, ".png": FileType.IMAGE,
     ".webp": FileType.IMAGE, ".gif":  FileType.IMAGE, ".bmp":  FileType.IMAGE,
     ".tiff": FileType.IMAGE, ".tif":  FileType.IMAGE, ".svg":  FileType.IMAGE,
@@ -70,7 +76,11 @@ EXT_TO_FILE_TYPE = {
     ".rs":   FileType.TEXT, ".rb":   FileType.TEXT,  ".php":  FileType.TEXT,
     ".pdf":  FileType.TEXT, ".docx": FileType.TEXT,  ".xlsx": FileType.TEXT,
     ".pptx": FileType.TEXT, ".doc":  FileType.TEXT,
-}
+    ".mp4":  FileType.VIDEO, ".avi": FileType.VIDEO, ".mov": FileType.VIDEO,
+    ".mkv":  FileType.VIDEO, ".wmv": FileType.VIDEO, ".flv": FileType.VIDEO,
+    ".webm": FileType.VIDEO,
+    }
+
 
 # Evaluation dimension types (eva_type values)
 # Accuracy

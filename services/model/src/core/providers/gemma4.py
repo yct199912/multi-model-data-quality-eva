@@ -6,7 +6,7 @@ import threading
 from .base import BaseEvalProvider
 from ...config import settings
 
-OUTPUT_FORMAT_PROMPT = """完成之后只返回JSON，不要重复规则和解释。格式：{"score": 分数, "eva_content": "评价"}，分数为0到100的数字，评价用中文简短描述。"""
+OUTPUT_FORMAT_PROMPT = """完成之后只返回JSON，不要重复规则和解释。格式：{"score": 分数, "eva_content": "评价"}，分数为0.00到100.00的数字（必须保留两位小数），评价用中文简短描述。"""
 
 GEMMA4_CHAT_TEMPLATE = (
     "{% for message in messages %}"
@@ -17,6 +17,8 @@ GEMMA4_CHAT_TEMPLATE = (
     "{% for content in message.content %}"
     "{% if content.type == 'image' %}"
     "<image>\n"
+    "{% elif content.type == 'video' %}"
+    "<video>\n"
     "{% elif content.type == 'text' %}"
     "{{ content.text }}\n"
     "{% endif %}"
@@ -163,7 +165,8 @@ class Gemma4EvalProvider(BaseEvalProvider):
         return self.model_name
 
     async def evaluate(self, rule_prompt: str, output_format_prompt: str = "",
-                       image_base64: str = None, text_content: str = None) -> dict:
+                       image_base64: str = None, text_content: str = None,
+                       video_frames: list[str] = None) -> dict:
         """评价数据质量。
 
         支持单维度或多维度综合评价。返回解析后的 JSON 字典。
@@ -172,14 +175,16 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         full_prompt = rule_prompt + "\n" + (output_format_prompt or OUTPUT_FORMAT_PROMPT)
 
-        if image_base64:
+        if video_frames:
+            result = await self._evaluate_video(video_frames, full_prompt)
+        elif image_base64:
             result = await self._evaluate_image(image_base64, full_prompt)
         elif text_content:
             truncated = text_content[:settings.max_text_chars]
             full_text = f"以下是需要评价的内容：\n\n{truncated}\n\n{full_prompt}"
             result = await self._evaluate_text_inner(full_text)
         else:
-            raise ValueError("Must provide either image_base64 or text_content")
+            raise ValueError("Must provide image_base64, text_content, or video_frames")
 
         parsed = self._parse_json_response(result)
         logger.info(f"Parsed JSON result: {parsed}")
@@ -193,6 +198,48 @@ class Gemma4EvalProvider(BaseEvalProvider):
             except Exception:
                 parsed["score"] = 0
         return parsed
+
+    async def _evaluate_video(self, video_frames: list[str], prompt: str) -> str:
+        import base64
+        from PIL import Image
+        import io
+
+        def _eval():
+            self._init_model()
+            frames = []
+            max_size = getattr(settings, "max_image_size", 384)
+            for b64 in video_frames:
+                img_bytes = base64.b64decode(b64)
+                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                if max(img.size) > max_size:
+                    img.thumbnail((max_size, max_size), Image.LANCZOS)
+                frames.append(img)
+
+            # Use the processor's __call__ with <video> token
+            processor = self._processor
+            video_token = getattr(processor, "video_token", "<video>")
+            content = f"{video_token}\n{prompt}"
+            rendered = self._render_chat_template(
+                [{"role": "user", "content": content}]
+            )
+            
+            # gemma-4-e4b 处理器通常支持 videos 参数
+            try:
+                inputs = processor(
+                    text=[rendered],
+                    videos=[frames],  # 嵌套以匹配 batch 维度
+                    return_tensors="pt",
+                )
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Processor 'videos' arg failed ({e}), falling back to 'images'")
+                inputs = processor(
+                    text=[rendered],
+                    images=[frames],
+                    return_tensors="pt",
+                )
+            return self._generate_from_inputs(inputs)
+
+        return await asyncio.to_thread(_eval)
 
     async def _evaluate_image(self, image_base64: str, prompt: str) -> str:
         import base64

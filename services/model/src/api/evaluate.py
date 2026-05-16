@@ -16,8 +16,8 @@ async def evaluate_single_dimension(req: ModelEvalRequest):
     """单维度评价接口 — 接收规则提示词 + 文件内容，返回 score + eva_content。"""
     if not state.is_ready or state.provider is None:
         raise HTTPException(status_code=503, detail="Model not ready")
-    if not req.image_base64 and not req.text_content:
-        raise HTTPException(status_code=400, detail="Must provide either image_base64 or text_content")
+    if not req.image_base64 and not req.text_content and not req.video_frames:
+        raise HTTPException(status_code=400, detail="Must provide image_base64, text_content, or video_frames")
     async with _semaphore:
         try:
             result = await state.provider.evaluate(
@@ -25,6 +25,7 @@ async def evaluate_single_dimension(req: ModelEvalRequest):
                 output_format_prompt=req.output_format_prompt,
                 image_base64=req.image_base64,
                 text_content=req.text_content,
+                video_frames=req.video_frames,
             )
             return ModelEvalResponse(
                 score=result.get("score", 0),

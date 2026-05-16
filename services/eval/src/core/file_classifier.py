@@ -24,3 +24,7 @@ def is_image_file(filepath: str) -> bool:
 
 def is_text_file(filepath: str) -> bool:
     return classify_file(filepath) == FileType.TEXT
+
+
+def is_video_file(filepath: str) -> bool:
+    return classify_file(filepath) == FileType.VIDEO
