@@ -1,3 +1,4 @@
+import uuid
 # services/eval/src/workers/tasks.py
 """Celery 任务 — 数据质量评价核心流程。"""
 import asyncio
@@ -233,10 +234,29 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
                     ("uniqueness", SCORE_TABLE_UNIQUENESS, "image-content"),
                     ("consistency", SCORE_TABLE_INTEGRITY, "image-content"),
                 ]
+                # 提取分数用于汇总表
+                scores_map = {}
                 for key, table, eva_type in dims:
                     data = result.get(key, {})
+                    val = data.get("score", 0)
+                    scores_map[key] = val
                     _insert_score(db, loop, table, repo, file_path,
-                                  data.get("score", 0), "image", eva_type, data.get("eva_content", ""))
+                                  val, "image", eva_type, data.get("eva_content", ""))
+                
+                # 插入汇总表 (eval_file_results)
+                loop.run_until_complete(
+                    db.execute(
+                        """INSERT INTO eval_file_results (task_id, user_name, repo_name, file_path, file_type, 
+                           image_info_uniqueness, solid_region_score, noise_score, object_completeness, description)
+                           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)""",
+                        uuid.UUID(task_id), user_name, repo_name, file_path, "image",
+                        round(scores_map.get("uniqueness", 0), 2),
+                        round(scores_map.get("noinfo", 0), 2),
+                        round(scores_map.get("noise", 0), 2),
+                        round(scores_map.get("consistency", 0), 2),
+                        result.get("accuracy", {}).get("eva_content", "")
+                    )
+                )
             except Exception as e:
                 logger.error(f"Image combined eval failed for {file_path}: {e}")
 
@@ -280,10 +300,27 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
                     ("uniqueness", SCORE_TABLE_UNIQUENESS, "text-content"),
                     ("consistency", SCORE_TABLE_INTEGRITY, "text-content"),
                 ]
+                scores_map = {}
                 for key, table, eva_type in dims:
                     data = result.get(key, {})
+                    val = data.get("score", 0)
+                    scores_map[key] = val
                     _insert_score(db, loop, table, repo, file_path,
-                                  data.get("score", 0), "text", eva_type, data.get("eva_content", ""))
+                                  val, "text", eva_type, data.get("eva_content", ""))
+                
+                # 插入汇总表 (eval_file_results)
+                loop.run_until_complete(
+                    db.execute(
+                        """INSERT INTO eval_file_results (task_id, user_name, repo_name, file_path, file_type, 
+                           text_info_uniqueness, junk_score, desc_completeness, description)
+                           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
+                        uuid.UUID(task_id), user_name, repo_name, file_path, "text",
+                        round(scores_map.get("uniqueness", 0), 2),
+                        round(scores_map.get("noinfo", 0), 2),
+                        round(scores_map.get("desc_completeness", 0), 2),
+                        result.get("content_accuracy", {}).get("eva_content", "")
+                    )
+                )
             except Exception as e:
                 logger.error(f"Text combined eval failed for {file_path}: {e}")
 
@@ -319,10 +356,27 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
                     ("content_accuracy", SCORE_TABLE_ACCURACY, "video-content"),
                     ("redundancy", SCORE_TABLE_UNIQUENESS, "video-content"),
                 ]
+                scores_map = {}
                 for key, table, eva_type in dims:
                     data = result.get(key, {})
+                    val = data.get("score", 0)
+                    scores_map[key] = val
                     _insert_score(db, loop, table, repo, file_path,
-                                  data.get("score", 0), "video", eva_type, data.get("eva_content", ""))
+                                  val, "video", eva_type, data.get("eva_content", ""))
+                
+                # 插入汇总表 (eval_file_results) - 复用部分列
+                loop.run_until_complete(
+                    db.execute(
+                        """INSERT INTO eval_file_results (task_id, user_name, repo_name, file_path, file_type, 
+                           solid_region_score, noise_score, object_completeness, description)
+                           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
+                        uuid.UUID(task_id), user_name, repo_name, file_path, "video",
+                        round(scores_map.get("redundancy", 0), 2),
+                        round(scores_map.get("visual_quality", 0), 2),
+                        round(scores_map.get("temporal_consistency", 0), 2),
+                        result.get("content_accuracy", {}).get("eva_content", "")
+                    )
+                )
             except Exception as e:
                 logger.error(f"Video combined eval failed for {file_path}: {e}")
 
