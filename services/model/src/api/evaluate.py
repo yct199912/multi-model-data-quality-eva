@@ -27,9 +27,11 @@ async def evaluate_single_dimension(req: ModelEvalRequest):
                 text_content=req.text_content,
                 video_frames=req.video_frames,
             )
+            # 兼容旧格式并返回完整字典
             return ModelEvalResponse(
-                score=result.get("score", 0),
-                eva_content=result.get("eva_content", ""),
+                score=result.get("score", {}).get("score", 0) if isinstance(result.get("score"), dict) else result.get("score", 0),
+                eva_content=result.get("score", {}).get("eva_content", "") if isinstance(result.get("score"), dict) else result.get("eva_content", ""),
+                raw_result=result
             )
         except Exception as e:
             logging.error(f"Evaluation failed: {e}", exc_info=True)

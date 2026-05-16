@@ -223,7 +223,9 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
 
             # 一键综合评价：将原本 5 次调用合并为 1 次
             try:
-                result = _call_model(COMBINED_IMAGE_EVAL_PROMPT, image_base64=content_b64)
+                model_resp = _call_model(COMBINED_IMAGE_EVAL_PROMPT, image_base64=content_b64)
+                # 使用新的 raw_result 字段
+                result = model_resp.get("raw_result") or model_resp
                 logger.debug(f"Combined image result for {file_path}: {result}")
                 
                 # 分维度解析并插入数据库
@@ -289,7 +291,8 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
 
             # 一键综合评价：将原本 6 次调用合并为 1 次
             try:
-                result = _call_model(COMBINED_TEXT_EVAL_PROMPT, text_content=text_content)
+                model_resp = _call_model(COMBINED_TEXT_EVAL_PROMPT, text_content=text_content)
+                result = model_resp.get("raw_result") or model_resp
                 logger.debug(f"Combined text result for {file_path}: {result}")
                 
                 dims = [
@@ -347,7 +350,8 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
 
             # 一键综合评价
             try:
-                result = _call_model(COMBINED_VIDEO_EVAL_PROMPT, video_frames=frames)
+                model_resp = _call_model(COMBINED_VIDEO_EVAL_PROMPT, video_frames=frames)
+                result = model_resp.get("raw_result") or model_resp
                 logger.debug(f"Combined video result for {file_path}: {result}")
                 
                 dims = [

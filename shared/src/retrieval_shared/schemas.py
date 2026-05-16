@@ -104,8 +104,9 @@ class ModelEvalRequest(BaseModel):
 
 class ModelEvalResponse(BaseModel):
     """模型服务评价响应"""
-    score: float
-    eva_content: str
+    score: float = Field(0, description="评分 (0-100)")
+    eva_content: str = Field("", description="评价内容")
+    raw_result: Optional[dict] = Field(default=None, description="原始完整评价结果")
 
 
 # ============================================================================
