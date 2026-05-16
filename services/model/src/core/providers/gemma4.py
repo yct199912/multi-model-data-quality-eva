@@ -122,7 +122,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
         logger.info(f"Loading model from {model_source}")
 
         # gemma-4-e4b is a multimodal vision-language model.
-        from transformers import AutoModel, AutoModelForCausalLM
+        from transformers import AutoModel, AutoModelForCausalLM, AutoModelForMultimodalLM
         import torch
 
         load_dtype = torch.float16
@@ -136,24 +136,34 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 load_dtype = torch.float32
                 logger.info("CPU does not support bfloat16 natively, using float32")
 
-        # Try loading as the multimodal model first
+        # Try loading as the multimodal model first (standard for Gemma 4)
         try:
-            model = AutoModel.from_pretrained(
+            model = AutoModelForMultimodalLM.from_pretrained(
                 model_source,
                 torch_dtype=load_dtype,
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,
             )
-            logger.info(f"Loaded model as AutoModel with {load_dtype}")
-        except Exception as e:
-            logger.warning(f"Cannot load as AutoModel: {e}, falling back to AutoModelForCausalLM")
-            model = AutoModelForCausalLM.from_pretrained(
-                model_source,
-                torch_dtype=load_dtype,
-                trust_remote_code=True,
-                low_cpu_mem_usage=True,
-            )
-            logger.info(f"Loaded model as AutoModelForCausalLM with {load_dtype}")
+            logger.info(f"Loaded model as AutoModelForMultimodalLM with {load_dtype}")
+        except (Exception, ImportError) as e:
+            logger.warning(f"AutoModelForMultimodalLM failed ({e}), trying AutoModel")
+            try:
+                model = AutoModel.from_pretrained(
+                    model_source,
+                    torch_dtype=load_dtype,
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=True,
+                )
+                logger.info(f"Loaded model as AutoModel with {load_dtype}")
+            except Exception as e2:
+                logger.warning(f"AutoModel failed ({e2}), falling back to AutoModelForCausalLM")
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_source,
+                    torch_dtype=load_dtype,
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=True,
+                )
+                logger.info(f"Loaded model as AutoModelForCausalLM with {load_dtype}")
         self._model = model
         logger.info("Model loaded successfully, moving to device")
         self._model = self._model.to(self.device)
