@@ -260,6 +260,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
         import base64
         from PIL import Image
         import io
+        import torch
 
         def _eval():
             self._init_model()
@@ -270,7 +271,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 image.thumbnail((max_size, max_size), Image.LANCZOS)
                 logger.info(f"Resized image to {image.size} for faster inference")
 
-            # Structured multimodal content
+            processor = self._processor
             messages = [
                 {
                     "role": "user",
@@ -280,15 +281,62 @@ class Gemma4EvalProvider(BaseEvalProvider):
                     ]
                 }
             ]
-            rendered = self._render_chat_template(messages)
             
-            processor = self._processor
-            inputs = processor(
-                text=[rendered],
-                images=[image],
-                return_tensors="pt",
+            inputs = processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt"
             )
-            return self._generate_from_inputs(inputs)
+            inputs["images"] = [image]
+            
+            return self._generate_from_inputs(inputs, is_tokenized=True)
+
+        return await asyncio.to_thread(_eval)
+
+    async def _evaluate_video(self, video_frames: list[str], prompt: str) -> str:
+        import base64
+        from PIL import Image
+        import io
+        import torch
+
+        def _eval():
+            self._init_model()
+            frames = []
+            max_size = getattr(settings, "max_image_size", 384)
+            for b64 in video_frames:
+                img_bytes = base64.b64decode(b64)
+                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                if max(img.size) > max_size:
+                    img.thumbnail((max_size, max_size), Image.LANCZOS)
+                frames.append(img)
+
+            processor = self._processor
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "video"},
+                        {"type": "text", "text": prompt}
+                    ]
+                }
+            ]
+            
+            inputs = processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt"
+            )
+            # 添加视频数据
+            if hasattr(processor, "image_processor") and "videos" in processor.image_processor.model_input_names:
+                inputs["videos"] = [frames]
+            else:
+                inputs["images"] = [frames]
+                
+            return self._generate_from_inputs(inputs, is_tokenized=True)
 
         return await asyncio.to_thread(_eval)
 
@@ -297,13 +345,17 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         def _eval():
             self._init_model()
-            rendered = self._render_chat_template(
-                [{"role": "user", "content": full_text}]
-            )
             processor = self._processor
-            tokenizer = getattr(processor, "tokenizer", processor)
-            inputs = tokenizer(rendered, return_tensors="pt")
-            return self._generate_from_inputs(inputs)
+            messages = [{"role": "user", "content": full_text}]
+            
+            inputs = processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt"
+            )
+            return self._generate_from_inputs(inputs, is_tokenized=True)
 
         return await asyncio.to_thread(_eval)
 
@@ -357,7 +409,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
             messages=messages, add_generation_prompt=True,
         )
 
-    def _generate_from_inputs(self, inputs: dict) -> str:
+    def _generate_from_inputs(self, inputs: dict, is_tokenized: bool = False) -> str:
         """Run model.generate() on prepared inputs and decode the output.
 
         Strips ignored keys, moves tensors to device, decodes only new tokens.
@@ -381,8 +433,10 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 repetition_penalty=1.2,
             )
 
+        # Handle tokenized inputs vs raw text
         input_len = inputs["input_ids"].shape[1]
         generated = outputs[0][input_len:]
+            
         decoded = processor.decode(generated, skip_special_tokens=True)
         logger.info(f"Raw model output: {decoded}")
         return decoded
