@@ -27,10 +27,18 @@ async def evaluate_single_dimension(req: ModelEvalRequest):
                 text_content=req.text_content,
                 video_frames=req.video_frames,
             )
-            # 兼容旧格式并返回完整字典
+            # 兼容逻辑：处理经过 Super Parser 标准化的结果
+            res_score = result.get("score", 0)
+            if isinstance(res_score, dict):
+                res_score = res_score.get("score", 0)
+            
+            res_eva = result.get("eva_content", "")
+            if isinstance(res_eva, dict):
+                res_eva = res_eva.get("eva_content", "")
+
             return ModelEvalResponse(
-                score=result.get("score", {}).get("score", 0) if isinstance(result.get("score"), dict) else result.get("score", 0),
-                eva_content=result.get("score", {}).get("eva_content", "") if isinstance(result.get("score"), dict) else result.get("eva_content", ""),
+                score=float(res_score),
+                eva_content=str(res_eva),
                 raw_result=result
             )
         except Exception as e:
