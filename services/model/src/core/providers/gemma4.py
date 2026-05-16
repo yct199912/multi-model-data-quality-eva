@@ -265,6 +265,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
             full_prompt = f"{image_token}\n{prompt}"
             
             rendered = self._render_chat_template([{"role": "user", "content": full_prompt}])
+            logger.info(f"Rendered prompt: {rendered}")
             
             inputs = processor(
                 text=[rendered],
