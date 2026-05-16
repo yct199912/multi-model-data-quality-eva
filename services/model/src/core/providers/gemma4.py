@@ -11,19 +11,7 @@ OUTPUT_FORMAT_PROMPT = """完成之后只返回JSON，不要重复规则和解�
 GEMMA4_CHAT_TEMPLATE = (
     "{% for message in messages %}"
     "<start_of_turn>{{ message.role }}\n"
-    "{% if message.content is string %}"
     "{{ message.content }}\n"
-    "{% else %}"
-    "{% for content in message.content %}"
-    "{% if content.type == 'image' %}"
-    "<image>\n"
-    "{% elif content.type == 'video' %}"
-    "<video>\n"
-    "{% elif content.type == 'text' %}"
-    "{{ content.text }}\n"
-    "{% endif %}"
-    "{% endfor %}"
-    "{% endif %}"
     "<end_of_turn>\n"
     "{% endfor %}"
     "{% if add_generation_prompt %}"
@@ -272,25 +260,17 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 logger.info(f"Resized image to {image.size} for faster inference")
 
             processor = self._processor
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image"},
-                        {"type": "text", "text": prompt}
-                    ]
-                }
-            ]
+            # gemma-4-e4b 使用 <|image|>
+            image_token = "<|image|>"
+            full_prompt = f"{image_token}\n{prompt}"
             
-            inputs = processor.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt"
+            rendered = self._render_chat_template([{"role": "user", "content": full_prompt}])
+            
+            inputs = processor(
+                text=[rendered],
+                images=[image],
+                return_tensors="pt",
             )
-            inputs["images"] = [image]
-            
             return self._generate_from_inputs(inputs, is_tokenized=True)
 
         return await asyncio.to_thread(_eval)
@@ -313,29 +293,25 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 frames.append(img)
 
             processor = self._processor
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "video"},
-                        {"type": "text", "text": prompt}
-                    ]
-                }
-            ]
+            # gemma-4-e4b 使用 <|video|>
+            video_token = "<|video|>"
+            full_prompt = f"{video_token}\n{prompt}"
             
-            inputs = processor.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt"
-            )
-            # 添加视频数据
-            if hasattr(processor, "image_processor") and "videos" in processor.image_processor.model_input_names:
-                inputs["videos"] = [frames]
-            else:
-                inputs["images"] = [frames]
-                
+            rendered = self._render_chat_template([{"role": "user", "content": full_prompt}])
+            
+            # 尝试使用 videos 参数，否则回退到 images
+            try:
+                inputs = processor(
+                    text=[rendered],
+                    videos=[frames],
+                    return_tensors="pt",
+                )
+            except Exception:
+                inputs = processor(
+                    text=[rendered],
+                    images=[frames],
+                    return_tensors="pt",
+                )
             return self._generate_from_inputs(inputs, is_tokenized=True)
 
         return await asyncio.to_thread(_eval)
@@ -345,16 +321,9 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         def _eval():
             self._init_model()
+            rendered = self._render_chat_template([{"role": "user", "content": full_text}])
             processor = self._processor
-            messages = [{"role": "user", "content": full_text}]
-            
-            inputs = processor.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt"
-            )
+            inputs = processor(text=[rendered], return_tensors="pt")
             return self._generate_from_inputs(inputs, is_tokenized=True)
 
         return await asyncio.to_thread(_eval)
