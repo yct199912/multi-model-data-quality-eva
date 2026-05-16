@@ -61,10 +61,10 @@ MIME_TO_FILE_TYPE = {
     "video/x-msvideo": FileType.VIDEO,
     "video/quicktime": FileType.VIDEO,
     "video/x-matroska": FileType.VIDEO,
-    }
+}
 
-    # File extension → FileType (fallback when MIME not available)
-    EXT_TO_FILE_TYPE = {
+# File extension → FileType (fallback when MIME not available)
+EXT_TO_FILE_TYPE = {
     ".jpg":  FileType.IMAGE, ".jpeg": FileType.IMAGE, ".png": FileType.IMAGE,
     ".webp": FileType.IMAGE, ".gif":  FileType.IMAGE, ".bmp":  FileType.IMAGE,
     ".tiff": FileType.IMAGE, ".tif":  FileType.IMAGE, ".svg":  FileType.IMAGE,
@@ -79,7 +79,7 @@ MIME_TO_FILE_TYPE = {
     ".mp4":  FileType.VIDEO, ".avi": FileType.VIDEO, ".mov": FileType.VIDEO,
     ".mkv":  FileType.VIDEO, ".wmv": FileType.VIDEO, ".flv": FileType.VIDEO,
     ".webm": FileType.VIDEO,
-    }
+}
 
 
 # Evaluation dimension types (eva_type values)
