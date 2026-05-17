@@ -166,8 +166,9 @@ def _insert_repo_score(db, loop, table: str, repo: str,
         )
 
 
-def _delete_existing_scores(db, loop, repo: str):
+def _delete_existing_scores(db, loop, user_name: str, repo_name: str):
     """评价前清除该仓库在所有评分表中的历史记录。"""
+    repo = f"{user_name}/{repo_name}"
     tables = [
         SCORE_TABLE_ACCURACY, SCORE_TABLE_CONSISTENCY,
         SCORE_TABLE_UNIQUENESS, SCORE_TABLE_INTEGRITY,
@@ -179,6 +180,14 @@ def _delete_existing_scores(db, loop, repo: str):
         loop.run_until_complete(
             db.execute(f"DELETE FROM {table} WHERE repo=$1", repo)
         )
+    
+    # 清理汇总表
+    summary_tables = ["eval_file_results", "eval_aggregate_results"]
+    for table in summary_tables:
+        loop.run_until_complete(
+            db.execute(f"DELETE FROM {table} WHERE user_name=$1 AND repo_name=$2", user_name, repo_name)
+        )
+        
     logger.info(f"Cleared existing scores for repo={repo}")
 
 
@@ -189,7 +198,7 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
     loop = asyncio.get_event_loop()
 
     # 0. 清除该仓库的历史评分记录
-    _delete_existing_scores(db, loop, repo)
+    _delete_existing_scores(db, loop, user_name, repo_name)
 
     # 1. DFS 遍历获取所有文件
     all_files = gitea.dfs_traverse_repo(user_name, repo_name, branch_name)
@@ -280,20 +289,25 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             _, ext = os.path.splitext(file_path.lower())
             
             # 尝试使用文档处理器提取文本 (docx, xlsx, pptx, pdf)
-            text_content = extract_text_by_extension(ext, base64.b64decode(content_b64))
+            raw_bytes = base64.b64decode(content_b64)
+            text_content = extract_text_by_extension(ext, raw_bytes)
             
             # 如果不是 Office/PDF，则尝试作为纯文本解码
             if text_content is None:
                 try:
                     text_content = _decode_gitea_content(content_b64)
                 except Exception:
-                    text_content = base64.b64decode(content_b64).decode("utf-8", errors="replace")
+                    text_content = raw_bytes.decode("utf-8", errors="replace")
+
+            # 针对极短内容的特殊处理，避免模型输出为空
+            if text_content and len(text_content.strip()) < 10:
+                text_content = f"Text content is short: {text_content.strip()}"
 
             # 一键综合评价：将原本 6 次调用合并为 1 次
             try:
                 model_resp = _call_model(COMBINED_TEXT_EVAL_PROMPT, text_content=text_content)
                 result = model_resp.get("raw_result") or model_resp
-                logger.debug(f"Combined text result for {file_path}: {result}")
+                logger.info(f"Combined text result for {file_path}: {result}")
                 
                 dims = [
                     ("format_accuracy", SCORE_TABLE_ACCURACY, "text-format"),
@@ -304,14 +318,24 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
                     ("consistency", SCORE_TABLE_INTEGRITY, "text-content"),
                 ]
                 scores_map = {}
+                # 兼容处理：如果模型只返回了单个 score 结构
+                fallback_score = result.get("score", 0)
+                if isinstance(fallback_score, dict):
+                    fallback_score = fallback_score.get("score", 0)
+                
                 for key, table, eva_type in dims:
                     data = result.get(key, {})
-                    val = data.get("score", 0)
+                    # 如果该维度缺失，使用总分 fallback
+                    val = data.get("score", fallback_score if fallback_score > 0 else 0)
                     scores_map[key] = val
                     _insert_score(db, loop, table, repo, file_path,
                                   val, "text", eva_type, data.get("eva_content", ""))
                 
                 # 插入汇总表 (eval_file_results)
+                description = result.get("content_accuracy", {}).get("eva_content", "")
+                if not description and isinstance(result.get("eva_content"), str):
+                    description = result.get("eva_content")
+                    
                 loop.run_until_complete(
                     db.execute(
                         """INSERT INTO eval_file_results (task_id, user_name, repo_name, file_path, file_type, 
@@ -321,7 +345,7 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
                         round(scores_map.get("uniqueness", 0), 2),
                         round(scores_map.get("noinfo", 0), 2),
                         round(scores_map.get("desc_completeness", 0), 2),
-                        result.get("content_accuracy", {}).get("eva_content", "")
+                        description
                     )
                 )
             except Exception as e:
@@ -333,12 +357,14 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             )
         except Exception as e:
             logger.error(f"Error processing text {f['path']}: {e}")
+            evaluated_count += 1 # 确保进度继续
 
     # 5. 评价视频文件
     for f in video_files:
         try:
             content_b64 = gitea.download_file(user_name, repo_name, f["path"], branch_name)
             if not content_b64:
+                evaluated_count += 1
                 continue
             
             file_path = f["path"]
@@ -346,13 +372,14 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             frames = extract_frames_from_video(base64.b64decode(content_b64))
             if not frames:
                 logger.warning(f"No frames extracted for video {file_path}")
+                evaluated_count += 1
                 continue
 
             # 一键综合评价
             try:
                 model_resp = _call_model(COMBINED_VIDEO_EVAL_PROMPT, video_frames=frames)
                 result = model_resp.get("raw_result") or model_resp
-                logger.debug(f"Combined video result for {file_path}: {result}")
+                logger.info(f"Combined video result for {file_path}: {result}")
                 
                 dims = [
                     ("temporal_consistency", SCORE_TABLE_CONSISTENCY, "video-temporal"),
@@ -361,14 +388,22 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
                     ("redundancy", SCORE_TABLE_UNIQUENESS, "video-content"),
                 ]
                 scores_map = {}
+                fallback_score = result.get("score", 0)
+                if isinstance(fallback_score, dict):
+                    fallback_score = fallback_score.get("score", 0)
+
                 for key, table, eva_type in dims:
                     data = result.get(key, {})
-                    val = data.get("score", 0)
+                    val = data.get("score", fallback_score if fallback_score > 0 else 0)
                     scores_map[key] = val
                     _insert_score(db, loop, table, repo, file_path,
                                   val, "video", eva_type, data.get("eva_content", ""))
                 
                 # 插入汇总表 (eval_file_results) - 复用部分列
+                description = result.get("content_accuracy", {}).get("eva_content", "")
+                if not description and isinstance(result.get("eva_content"), str):
+                    description = result.get("eva_content")
+
                 loop.run_until_complete(
                     db.execute(
                         """INSERT INTO eval_file_results (task_id, user_name, repo_name, file_path, file_type, 
@@ -378,7 +413,7 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
                         round(scores_map.get("redundancy", 0), 2),
                         round(scores_map.get("visual_quality", 0), 2),
                         round(scores_map.get("temporal_consistency", 0), 2),
-                        result.get("content_accuracy", {}).get("eva_content", "")
+                        description
                     )
                 )
             except Exception as e:
@@ -390,6 +425,7 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             )
         except Exception as e:
             logger.error(f"Error processing video {f['path']}: {e}")
+            evaluated_count += 1
 
     # 6. 仓库级评价
     _do_repo_evaluation(db, loop, repo, repo_introduction, image_files, text_files)
