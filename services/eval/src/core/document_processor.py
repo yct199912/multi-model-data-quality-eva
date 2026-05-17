@@ -119,3 +119,38 @@ def extract_text_by_extension(extension: str, content_bytes: bytes) -> Optional[
     elif ext in (".pdf"):
         return extract_text_from_pdf(content_bytes)
     return None
+
+def prepare_text_content(content_base64: str, file_path: str) -> Optional[str]:
+    """
+    统一的文本内容准备接口。
+    封装了 base64 解码、Office/PDF 提取、纯文本回退以及过短文本的归一化处理。
+    """
+    if not content_base64:
+        return None
+        
+    _, ext = os.path.splitext(file_path.lower())
+    raw_bytes = base64.b64decode(content_base64)
+    
+    text_content = extract_text_by_extension(ext, raw_bytes)
+    
+    if text_content is None:
+        try:
+            # 尝试直接 utf-8 解码 Gitea 原生内容
+            text_content = base64.b64decode(content_base64).decode("utf-8", errors="replace")
+        except Exception:
+            text_content = raw_bytes.decode("utf-8", errors="replace")
+
+    if text_content and len(text_content.strip()) < 10:
+        text_content = f"Text content is short: {text_content.strip()}"
+        
+    return text_content
+
+def prepare_video_frames(content_base64: str, num_frames: int = 8) -> List[str]:
+    """
+    统一的视频帧准备接口。
+    封装了 base64 解码和帧提取逻辑。
+    """
+    if not content_base64:
+        return []
+    raw_bytes = base64.b64decode(content_base64)
+    return extract_frames_from_video(raw_bytes, num_frames)
