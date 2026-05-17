@@ -408,10 +408,10 @@ class Gemma4EvalProvider(BaseEvalProvider):
     def _parse_json_response(text: str) -> dict:
         """从模型输出中提取 JSON 评分结果。
 
-        超级增强版 2.0.1：
+        超级增强版 2.0.2：
         1. 采用栈式括号匹配提取所有顶级 JSON 对象。
-        2. 强力标准化：处理大小写、嵌套包装。
-        3. 智能合并：保留所有维度评分。
+        2. 针对“复读 Prompt”的情况进行过滤。
+        3. 优先寻找命中维度关键词 (accuracy, uniqueness等) 的结构。
         """
         import json
         import re
@@ -430,11 +430,12 @@ class Gemma4EvalProvider(BaseEvalProvider):
         cleaned = cleaned.replace('：', ':').replace('，', ',')
         cleaned = re.sub(r'[\x00-\x1f]', ' ', cleaned)
 
-        # 2. 提取所有顶级 JSON 结构 (栈匹配)
+        # 2. 括号匹配提取
         potential_objects = []
 
         def extract_json_structures(s):
             results = []
+            # 寻找所有的 { 和 [ 开启点
             starts = [i for i, c in enumerate(s) if c in '{[']
             for start in starts:
                 opening = s[start]
@@ -450,13 +451,12 @@ class Gemma4EvalProvider(BaseEvalProvider):
                             try:
                                 obj = json.loads(content)
                                 results.append(obj)
-                                # 成功提取一个后，跳过其内部的所有 starts
+                                # 找到一个后不再深入其内部寻找 start，但可以继续寻找并列的 start
                                 break
                             except:
                                 pass
             return results
 
-        # 尝试提取
         match = re.search(r'```(?:json)?\s*(.*?)\s*```', cleaned, re.DOTALL)
         if match:
             potential_objects = extract_json_structures(match.group(1))
@@ -464,14 +464,17 @@ class Gemma4EvalProvider(BaseEvalProvider):
         if not potential_objects:
             potential_objects = extract_json_structures(cleaned)
 
-        # 3. 标准化与合并
+        # 3. 标准化逻辑
         final_result = {}
+
+        # 维度关键词
+        DIM_KEYS = ("accuracy", "uniqueness", "consistency", "noinfo", "noise", "completeness", "temporal", "visual", "format", "content")
 
         def normalize_val(v):
             if isinstance(v, (int, float)):
                 return {"score": float(v), "eva_content": ""}
             if isinstance(v, dict):
-                res = {"score": 0.0, "eva_content": ""}
+                res = {"score": -1.0, "eva_content": ""}
                 for k, sub_v in v.items():
                     kl = k.lower()
                     if kl == "score":
@@ -480,35 +483,44 @@ class Gemma4EvalProvider(BaseEvalProvider):
                     elif kl in ("eva_content", "evacontent", "description", "eva"):
                         res["eva_content"] = str(sub_v)
 
-                # 处理包装层
-                if "score" not in [k.lower() for k in v.keys()] and len(v) == 1:
+                # 处理嵌套
+                if res["score"] < 0 and len(v) == 1:
                     inner_v = list(v.values())[0]
                     if isinstance(inner_v, dict):
                         return normalize_val(inner_v)
+
+                if res["score"] < 0: res["score"] = 0.0
                 return res
             return {"score": 0.0, "eva_content": str(v)}
 
+        # 4. 合并与过滤
         for obj in potential_objects:
             if isinstance(obj, list):
                 for item in obj:
                     if isinstance(item, dict):
-                        # 如果是 [{"name": "acc", "value": 90}] 这种格式
+                        # 处理 [{"name": "xxx", "value": 90}]
                         name = str(item.get("name", item.get("Name", "unknown"))).lower()
                         val = item.get("value", item.get("Value", item))
-                        final_result[name] = normalize_val(val)
+                        # 过滤掉复读 prompt 的 item (如果 score 为 0 且 description 很长)
+                        norm = normalize_val(val)
+                        if norm["score"] > 0 or len(norm["eva_content"]) < 100:
+                            final_result[name] = norm
             elif isinstance(obj, dict):
                 for k, v in obj.items():
-                    final_result[k.lower()] = normalize_val(v)
+                    kl = k.lower()
+                    # 过滤明显的规则定义项
+                    if kl in ("name", "description", "type", "minimum", "maximum", "examplevalue"):
+                        continue
+                    final_result[kl] = normalize_val(v)
 
-        # 4. 兜底正则 (针对完全损坏的 JSON)
+        # 5. 兜底正则
         if not final_result:
             for m in re.finditer(r'"(\w+)":\s*(?:\{[^{}]*)?"score":\s*([\d.]+)', cleaned, re.I):
                 final_result[m.group(1).lower()] = {"score": float(m.group(2)), "eva_content": ""}
 
-        # 确保基础兼容性
+        # 6. 兼容性总分
         if "score" not in final_result and final_result:
-            # 找到最像总分的一个键，或者取第一个
-            best_score_key = next((k for k in final_result if k in ("score", "accuracy", "total")), list(final_result.keys())[0])
-            final_result["score"] = final_result[best_score_key]
+            best_key = next((k for k in final_result if any(dk in k for dk in DIM_KEYS)), list(final_result.keys())[0])
+            final_result["score"] = final_result[best_key]
 
         return final_result
