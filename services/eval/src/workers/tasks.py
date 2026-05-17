@@ -428,12 +428,12 @@ def _do_evaluation(db, task_id, user_name, repo_name, branch_name, repo_introduc
             evaluated_count += 1
 
     # 6. 仓库级评价
-    _do_repo_evaluation(db, loop, repo, repo_introduction, image_files, text_files)
+    _do_repo_evaluation(db, loop, repo, repo_introduction, image_files, text_files, video_files)
 
     logger.info(f"Evaluation task {task_id} completed: {len(image_files)} images, {len(text_files)} texts, {len(video_files)} videos")
 
 
-def _do_repo_evaluation(db, loop, repo, repo_introduction, image_files, text_files):
+def _do_repo_evaluation(db, loop, repo, repo_introduction, image_files, text_files, video_files):
     """仓库级评价：在所有文件评价完成后，对整个数据仓库进行宏观评价。"""
 
     # --- 有效性 ---
