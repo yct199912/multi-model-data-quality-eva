@@ -408,10 +408,11 @@ class Gemma4EvalProvider(BaseEvalProvider):
     def _parse_json_response(text: str) -> dict:
         """从模型输出中提取 JSON 评分结果。
 
-        超级增强版：
-        1. 支持最外层是列表的情况。
-        2. 自动兼容大小写 (Score/score, eva_content/EvaContent)。
-        3. 自动剥离 "value" 或 "Score" 等嵌套包装。
+        超级增强版 2.0：
+        1. 自动寻找并提取文本中所有的 JSON 对象/列表。
+        2. 如果存在多个对象，进行智能合并。
+        3. 强力标准化：处理大小写、嵌套包装（value/Score等）。
+        4. 兜底正则：即使 JSON 完全损坏，也能尝试提取关键评分。
         """
         import json
         import re
@@ -421,70 +422,34 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         logger.debug(f"Raw model output (first 300 chars): {text[:300]}")
 
-        # 1. 基础清洗
+        # 1. 基础清洗：统一引号和标点
         cleaned = text
         for ch in ['“', '”', '「', '」', '＂', '『', '』']:
             cleaned = cleaned.replace(ch, '"')
         for ch in ['‘', '’', '′']:
             cleaned = cleaned.replace(ch, "'")
         cleaned = cleaned.replace('：', ':').replace('，', ',')
+        # 移除控制字符
+        cleaned = re.sub(r'[\x00-\x1f]', ' ', cleaned)
 
-        # 2. 提取 JSON 内容 (寻找最宽的花括号或中括号)
-        json_content = None
-        match = re.search(r'```(?:json)?\s*(.*?)\s*```', cleaned, re.DOTALL)
-        if match:
-            json_content = match.group(1)
-        else:
-            # 寻找第一个 { 或 [ 到最后一个 } 或 ]
-            start_idx = -1
-            for i, c in enumerate(cleaned):
-                if c in '{[':
-                    start_idx = i
-                    break
-            if start_idx != -1:
-                end_char = '}' if cleaned[start_idx] == '{' else ']'
-                end_idx = cleaned.rfind(end_char)
-                if end_idx != -1:
-                    json_content = cleaned[start_idx:end_idx + 1]
-
-        if not json_content:
-            json_content = cleaned
-
-        # 清洗控制字符
-        json_content = re.sub(r'[\x00-\x1f]', ' ', json_content)
-
-        try:
-            parsed = json.loads(json_content)
-        except json.JSONDecodeError:
-            # 最后的兜底尝试：正则提取所有 key-value 对
-            parsed = {}
-            # 这是一个非常激进的匹配，用于提取 {"key": {"score": 90, ...}} 这种结构
-            for m in re.finditer(r'"(\w+)":\s*\{[^{}]*"score":\s*([\d.]+)', json_content, re.I):
-                parsed[m.group(1).lower()] = {"score": float(m.group(2))}
-            if not parsed:
-                # 尝试匹配旧格式 {"score": 90}
-                m_score = re.search(r'"score":\s*([\d.]+)', json_content, re.I)
-                m_eva = re.search(r'"eva_content":\s*"([^"]*)"', json_content, re.I)
-                if m_score:
-                    parsed["score"] = float(m_score.group(1))
-                    parsed["eva_content"] = m_eva.group(1) if m_eva else ""
-            return parsed
-
-        # 3. 结构化标准化 (将所有结构统一为 dict[lower_key, {"score": float, "eva_content": str}])
-
+        # 2. 定义内部标准化函数
         def normalize_val(v):
             if isinstance(v, (int, float)):
                 return {"score": float(v), "eva_content": ""}
+            if isinstance(v, str):
+                try: return {"score": float(v), "eva_content": ""}
+                except: return {"score": 0.0, "eva_content": v}
             if isinstance(v, dict):
-                # 寻找 score 和 content (忽略大小写)
                 res = {"score": 0.0, "eva_content": ""}
                 for k, sub_v in v.items():
                     kl = k.lower()
                     if kl == "score":
-                        res["score"] = float(sub_v) if isinstance(sub_v, (int, float, str)) else 0.0
+                        try: res["score"] = float(sub_v)
+                        except: pass
                     elif kl in ("eva_content", "evacontent", "description", "eva"):
                         res["eva_content"] = str(sub_v)
-                # 处理有些模型会多包一层 "value": {"Score": 90}
+
+                # 处理包装层：如果字典只有一个 key 且不是 score，递归进去
                 if "score" not in [k.lower() for k in v.keys()] and len(v) == 1:
                     inner_v = list(v.values())[0]
                     if isinstance(inner_v, dict):
@@ -492,16 +457,72 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 return res
             return {"score": 0.0, "eva_content": str(v)}
 
+        # 3. 提取所有可能的 JSON 段块
         final_result = {}
-        if isinstance(parsed, list):
-            # 处理 [{"name": "accuracy", "value": {...}}, ...]
-            for item in parsed:
-                if isinstance(item, dict):
-                    name = item.get("name", item.get("Name", "unknown")).lower()
-                    val = item.get("value", item.get("Value", item))
-                    final_result[name] = normalize_val(val)
-        elif isinstance(parsed, dict):
-            for k, v in parsed.items():
-                final_result[k.lower()] = normalize_val(v)
+
+        # 尝试寻找所有的 { ... } 和 [ ... ]
+        # 这里的策略是：寻找每一个 { 并尝试匹配最近的 }，或者寻找最长的匹配
+        # 更简单有效的方法：利用正则表达式提取
+        potential_objects = []
+
+        # 匹配花括号内容 (处理简单的嵌套)
+        brace_matches = re.finditer(r'\{[^{}]*\}', cleaned)
+        for m in brace_matches:
+            try:
+                obj = json.loads(m.group())
+                potential_objects.append(obj)
+            except: pass
+
+        # 匹配中括号内容 (处理列表形式)
+        bracket_matches = re.finditer(r'\[[^\[\]]*\]', cleaned)
+        for m in bracket_matches:
+            try:
+                obj = json.loads(m.group())
+                potential_objects.append(obj)
+            except: pass
+
+        # 如果正则没抓到，尝试全局一次性解析 (原有逻辑)
+        if not potential_objects:
+            start_idx = cleaned.find('{')
+            if start_idx == -1: start_idx = cleaned.find('[')
+            if start_idx != -1:
+                end_char = '}' if cleaned[start_idx] == '{' else ']'
+                end_idx = cleaned.rfind(end_char)
+                if end_idx != -1:
+                    try:
+                        potential_objects.append(json.loads(cleaned[start_idx:end_idx+1]))
+                    except: pass
+
+        # 4. 解析并合并所有对象
+        for obj in potential_objects:
+            if isinstance(obj, list):
+                # 处理 [{"name": "accuracy", "value": {...}}, ...]
+                for item in obj:
+                    if isinstance(item, dict):
+                        name = str(item.get("name", item.get("Name", "unknown"))).lower()
+                        val = item.get("value", item.get("Value", item))
+                        final_result[name] = normalize_val(val)
+            elif isinstance(obj, dict):
+                # 处理 {"accuracy": {...}, "score": 90}
+                for k, v in obj.items():
+                    final_result[k.lower()] = normalize_val(v)
+
+        # 5. 最后的兜底：正则匹配 key-score 对 (应对完全非 JSON 文本)
+        if not final_result or (len(final_result) == 1 and "unknown" in final_result):
+            # 匹配 "accuracy": 90 或 "accuracy": {"score": 90}
+            for m in re.finditer(r'"(\w+)":\s*(?:\{[^{}]*)?"score":\s*([\d.]+)', cleaned, re.I):
+                final_result[m.group(1).lower()] = {"score": float(m.group(2)), "eva_content": ""}
+            # 匹配 "accuracy": 90 (纯数字)
+            for m in re.finditer(r'"(\w+)":\s*([\d.]+)', cleaned, re.I):
+                k = m.group(1).lower()
+                if k not in final_result and k not in ("score", "id", "evaluateid"):
+                    final_result[k] = {"score": float(m.group(2)), "eva_content": ""}
+
+        # 确保存在基本的 score 键用于兼容
+        if "score" not in final_result and final_result:
+            # 取第一个维度的分作为总分
+            first_val = list(final_result.values())[0]
+            if isinstance(first_val, dict) and "score" in first_val:
+                final_result["score"] = first_val
 
         return final_result
