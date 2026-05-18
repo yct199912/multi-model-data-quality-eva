@@ -25,7 +25,7 @@ def _get_db():
 
 
 @celery_app.task(bind=True, max_retries=1, default_retry_delay=30)
-def run_evaluation(self, task_id: str, user_name: str, repo_name: str,
+def run_evaluation(self, evaluate_id: int, task_id: str, user_name: str, repo_name: str,
                    branch_name: str, repo_introduction: str):
     """核心评价任务。"""
     db = _get_db()
@@ -45,7 +45,7 @@ def run_evaluation(self, task_id: str, user_name: str, repo_name: str,
 
         # 评价完成后构建 JSON 并发送回调
         repo = f"{user_name}/{repo_name}"
-        callback_json = loop.run_until_complete(_build_callback_json(db, task_id, repo))
+        callback_json = loop.run_until_complete(_build_callback_json(db, task_id, evaluate_id, repo))
         _do_callback(task_id, callback_json)
 
         loop.run_until_complete(
@@ -68,7 +68,7 @@ def run_evaluation(self, task_id: str, user_name: str, repo_name: str,
         loop.close()
 
 
-async def _build_callback_json(db, task_id: str, repo: str) -> dict:
+async def _build_callback_json(db, task_id: str, eva_id: int, repo: str) -> dict:
     """从数据库查询所有仓库级评分，构建回调 JSON。"""
     def _float_or_none(val):
         return float(val) if val is not None else None
@@ -186,12 +186,13 @@ async def _build_callback_json(db, task_id: str, repo: str) -> dict:
 
     return {
         "taskId": task_id,
+        "evaluateId": eva_id,
         "ruleScore": rule_score,
     }
 
 
 def _do_callback(task_id: str, callback_json: dict):
-    """将评价结果 JSON POST 到回调接口。"""
+    """将评价结果 JSON POST 到回调接口，并在 callback_json 中记录回调状态码。"""
     recall_ip = settings.recall_ip
     recall_port = settings.recall_port
     recall_api = settings.recall_api
@@ -201,7 +202,9 @@ def _do_callback(task_id: str, callback_json: dict):
     url = f"http://{recall_ip}:{recall_port}{recall_api}"
     try:
         with httpx.Client(timeout=30) as client:
+            callback_json["code"] = 200
             resp = client.post(url, json=callback_json)
             logger.info(f"Callback POST {url} for task {task_id}: status={resp.status_code}")
     except Exception as e:
+        callback_json["code"] = -1
         logger.error(f"Callback POST failed for task {task_id}: {e}")
