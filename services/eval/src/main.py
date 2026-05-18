@@ -2,7 +2,7 @@
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from .api import evaluate
+from .api import evaluate, rule_dict
 from .dependencies import db
 from .config import settings
 from retrieval_shared.logging_config import configure_logging
@@ -24,6 +24,7 @@ app.add_middleware(RequestIDMiddleware)
 setup_exception_handlers(app)
 
 app.include_router(evaluate.router)
+app.include_router(rule_dict.router)
 
 
 @app.get("/health")
