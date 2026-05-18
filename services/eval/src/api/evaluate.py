@@ -14,8 +14,8 @@ router = APIRouter(prefix="/api/v1", tags=["evaluate"])
 
 
 def verify_app_key(
-    x_app_key: str = Header(..., alias="X-App-Key"),
-    x_app_secret: str = Header(..., alias="X-App-Secret"),
+    x_app_key: str = Header(..., alias="appKey"),
+    x_app_secret: str = Header(..., alias="appSecret"),
 ):
     """验证 appKey / appSecret。"""
     if x_app_key != settings.app_key or x_app_secret != settings.app_secret:
