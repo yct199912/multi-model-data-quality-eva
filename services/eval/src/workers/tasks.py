@@ -161,27 +161,27 @@ async def _build_callback_json(db, task_id: str, eva_id: int, repo: str) -> dict
 
     rule_score = [
         # accuracy
-        _rule_entry("accuracy", "imgContent", "准确性-图像内容准确性检测", img_content_acc),
-        _rule_entry("accuracy", "textContent", "准确性-文本内容准确性检测", text_content_acc),
-        _rule_entry("accuracy", "textFormat", "准确性-文本格式准确性检测", text_format_acc),
+        _rule_entry("accurate", "imgContent", "准确性-图像内容准确性检测", img_content_acc),
+        _rule_entry("accurate", "textContent", "准确性-文本内容准确性检测", text_content_acc),
+        _rule_entry("accurate", "textFormat", "准确性-文本格式准确性检测", text_format_acc),
         # consistency
-        _rule_entry("consistency", "imgNoInfoRegion", "完整性-图像无信息区域检测", img_noinfo_con),
-        _rule_entry("consistency", "imgNoise", "完整性-图像无信息噪声检测", img_noise_con),
-        _rule_entry("consistency", "textInfo", "完整性-无信息文本检测", text_noinfo_con),
-        _rule_entry("consistency", "textDesc", "完整性-文本描述完整性检测", text_desc_con),
+        _rule_entry("integrity", "imgNoInfoRegion", "完整性-图像无信息区域检测", img_noinfo_con),
+        _rule_entry("integrity", "imgNoise", "完整性-图像无信息噪声检测", img_noise_con),
+        _rule_entry("integrity", "textInfo", "完整性-无信息文本检测", text_noinfo_con),
+        _rule_entry("integrity", "textDesc", "完整性-文本描述完整性检测", text_desc_con),
         # unique
         _rule_entry("unique", "innerImage", "唯一性-图内信息唯一性检测", inner_img_unq),
         _rule_entry("unique", "interImage", "唯一性-图间信息唯一性检测", inter_img_unq, has_avg=False),
         _rule_entry("unique", "innerText", "唯一性-文本内容唯一性检测", inner_text_unq),
         _rule_entry("unique", "interText", "唯一性-文本间唯一性检测", inter_text_unq, has_avg=False),
         # integrity
-        _rule_entry("integrity", "innerImage", "一致性-图像中内容一致性检测", inner_img_int),
-        _rule_entry("integrity", "innerText", "一致性-文本内容描述一致性检测", inner_text_int),
-        _rule_entry("integrity", "interImage", "一致性-图像间一致性检测", inter_img_int, has_avg=False),
-        _rule_entry("integrity", "interText", "一致性-文本文件之间一致性检测", inter_text_int, has_avg=False),
+        _rule_entry("consistent", "innerImage", "一致性-图像中内容一致性检测", inner_img_int),
+        _rule_entry("consistent", "innerText", "一致性-文本内容描述一致性检测", inner_text_int),
+        _rule_entry("consistent", "interImage", "一致性-图像间一致性检测", inter_img_int, has_avg=False),
+        _rule_entry("consistent", "interText", "一致性-文本文件之间一致性检测", inter_text_int, has_avg=False),
         # time & effective
-        _simple_rule_entry("time", "time", "及时性检测", time_row),
-        _simple_rule_entry("effictive", "effictive", "有效性检测", eff_row),
+        _simple_rule_entry("timely", "timely", "及时性检测", time_row),
+        _simple_rule_entry("effective", "effictive", "有效性检测", eff_row),
     ]
 
     return {
