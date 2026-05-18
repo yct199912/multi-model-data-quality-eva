@@ -110,7 +110,11 @@ class EvaluationCoordinator:
         with httpx.Client(timeout=httpx.Timeout(connect=30, read=1200, write=30, pool=30)) as client:
             resp = client.post(url, json=payload)
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+            # 兼容 CodeWrapperMiddleware 包裹的 {"code": 200, "data": {...}} 格式
+            if isinstance(data, dict) and "code" in data and "data" in data:
+                data = data["data"]
+            return data
 
     def _process_images(self, task_id, user_name, repo_name, branch_name, files):
         repo = f"{user_name}/{repo_name}"
@@ -238,31 +242,37 @@ class EvaluationCoordinator:
         if repo_introduction:
             try:
                 res = self._call_model(REPO_EFFECTIVENESS_PROMPT, text_content=repo_introduction)
+                logger.info(f"模型分析结果:{res}")
                 self.ledger.record_repo_score(SCORE_TABLE_REPO_EFFECTIVENESS, repo, res.get("score", 0), res.get("eva_content", ""))
             except Exception as e: logger.error(f"Repo eval err: {e}")
             
             try:
                 res = self._call_model(REPO_TIMELINESS_PROMPT, text_content=repo_introduction)
+                logger.info(f"模型分析结果:{res}")
                 self.ledger.record_repo_score(SCORE_TABLE_REPO_TIMELINESS, repo, res.get("score", 0), res.get("eva_content", ""))
             except Exception as e: logger.error(f"Repo eval err: {e}")
 
         if image_files:
             try:
                 res = self._call_model(REPO_INTER_IMAGE_UNIQUENESS_PROMPT, text_content=f"Images: {len(image_files)}")
+                logger.info(f"模型分析结果:{res}")
                 self.ledger.update_or_insert_repo_self_score(SCORE_TABLE_REPO_UNIQUENESS, repo, res.get("score", 0), res.get("eva_content", ""), "inter-image-unq")
             except: pass
             try:
                 res = self._call_model(REPO_INTER_IMAGE_CONSISTENCY_PROMPT, text_content=f"Images: {len(image_files)}")
+                logger.info(f"模型分析结果:{res}")
                 self.ledger.update_or_insert_repo_self_score(SCORE_TABLE_REPO_INTEGRITY, repo, res.get("score", 0), res.get("eva_content", ""), "inter-image-integrity")
             except: pass
             
         if text_files:
             try:
                 res = self._call_model(REPO_INTER_TEXT_UNIQUENESS_PROMPT, text_content=f"Texts: {len(text_files)}")
+                logger.info(f"模型分析结果:{res}")
                 self.ledger.update_or_insert_repo_self_score(SCORE_TABLE_REPO_UNIQUENESS, repo, res.get("score", 0), res.get("eva_content", ""), "inter-text-unq")
             except: pass
             try:
                 res = self._call_model(REPO_INTER_TEXT_CONSISTENCY_PROMPT, text_content=f"Texts: {len(text_files)}")
+                logger.info(f"模型分析结果:{res}")
                 self.ledger.update_or_insert_repo_self_score(SCORE_TABLE_REPO_INTEGRITY, repo, res.get("score", 0), res.get("eva_content", ""), "inter-text-integrity")
             except: pass
 
