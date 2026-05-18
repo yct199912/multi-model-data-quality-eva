@@ -8,6 +8,7 @@ from .config import settings
 from retrieval_shared.logging_config import configure_logging
 from retrieval_shared.middleware import RequestIDMiddleware
 from retrieval_shared.exception_handlers import setup_exception_handlers
+from retrieval_shared.response_wrapper import CodeWrapperMiddleware
 
 configure_logging("eval-service", settings.log_level)
 
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Evaluation Service", version="1.0.0", lifespan=lifespan)
 app.add_middleware(RequestIDMiddleware)
+app.add_middleware(CodeWrapperMiddleware)
 setup_exception_handlers(app)
 
 app.include_router(evaluate.router)
