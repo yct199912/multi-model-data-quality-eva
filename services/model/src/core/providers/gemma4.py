@@ -138,14 +138,21 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         parsed = SuperParser.parse_json_response(result)
         logger.info(f"Parsed JSON result: {parsed}")
-        # Compatibility: if it's the old single-dimension format, ensure numeric score
+        # 从多维度结果中提取顶层 score 和 eva_content
+        # 如果是多维度格式如 {"accuracy": {"score": 76, ...}, ...}，
+        # 取第一个维度维度的 score 作为顶层得分
+        if "score" not in parsed or not isinstance(parsed.get("score"), (int, float)):
+            for key in parsed:
+                val = parsed[key]
+                if isinstance(val, dict) and "score" in val and isinstance(val["score"], (int, float)):
+                    parsed.setdefault("score", val["score"])
+                    parsed.setdefault("eva_content", val.get("eva_content", ""))
+                    break
+        # 确保 score 是数值
         if "score" in parsed and not isinstance(parsed["score"], (int, float)):
             try:
-                import re
-                num_match = re.search(r"[\d.]+", str(parsed["score"]))
-                if num_match:
-                    parsed["score"] = float(num_match.group())
-            except Exception:
+                parsed["score"] = float(parsed["score"])
+            except (ValueError, TypeError):
                 parsed["score"] = 0
         return parsed
 
