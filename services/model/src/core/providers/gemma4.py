@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 from .base import BaseEvalProvider
-from .parser import SuperParser
+from ..parser import SuperParser
 from ...config import settings
 
 OUTPUT_FORMAT_PROMPT = """完成之后只返回JSON，不要重复规则和解释。格式：{"score": 分数, "eva_content": "评价"}，分数为0.00到100.00的数字（必须保留两位小数），评价用中文简短描述。"""
