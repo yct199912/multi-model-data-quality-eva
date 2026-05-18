@@ -19,7 +19,7 @@ dependencies = [
 cpu = ["torch>=2.2,<3", "torchvision>=0.17,<1"]
 gemma4 = [
     "modelscope>=1.14",
-    "transformers>=4.57",
+    "transformers>=5.5",
     "Pillow>=10",
     "accelerate>=0.30",
     "protobuf>=3.20",

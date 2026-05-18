@@ -67,56 +67,29 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         logger.info(f"Model downloaded to: {model_source}")
 
-        from transformers import AutoTokenizer, AutoProcessor, AutoModelForCausalLM
+        from transformers import Gemma4Processor
         import torch
         import json
 
-        # 修复 tokenizer_config.json 中 extra_special_tokens 为 list 时的兼容性问题
-        # gemma-4-e4b 模型的 tokenizer_config.json 将 extra_special_tokens 设为 list，
-        # 而 transformers<=4.57 的 _set_model_specific_special_tokens 期望 dict
+        # transformers>=5.5 原生支持 Gemma4Processor，不再需要修复
         self._fix_tokenizer_config(model_source)
 
         logger.info(f"Loading processor from {model_source}")
-        processor = None
-        try:
-            processor = AutoProcessor.from_pretrained(model_source, trust_remote_code=True)
-            logger.info("Loaded AutoProcessor successfully")
-        except (ValueError, OSError, TypeError) as e:
-            logger.warning(f"AutoProcessor failed: {e}, falling back to AutoTokenizer")
-            try:
-                processor = AutoTokenizer.from_pretrained(
-                    model_source, trust_remote_code=True, use_fast=False,
-                )
-                logger.info("Loaded AutoTokenizer (slow) successfully")
-            except Exception as tokenizer_err:
-                logger.warning(f"AutoTokenizer (slow) also failed: {tokenizer_err}, trying fast tokenizer")
-                processor = AutoTokenizer.from_pretrained(
-                    model_source, trust_remote_code=True,
-                )
-                logger.info("Loaded AutoTokenizer (fast) successfully")
+        processor = Gemma4Processor.from_pretrained(model_source, trust_remote_code=True)
+        logger.info("Loaded Gemma4Processor successfully")
         self._processor = processor
 
-        # Ensure the processor has a chat_template — gemma-4-e4b from ModelScope
-        # may lack one, especially after _fix_tokenizer_config modifies tokenizer_config.json.
-        if hasattr(processor, "apply_chat_template"):
-            try:
-                processor.apply_chat_template([{"role": "user", "content": "test"}], tokenize=False, add_generation_prompt=True)
-            except (ValueError, AttributeError):
-                logger.info("Processor lacks chat_template — injecting Gemma 4 template")
-                if hasattr(processor, "tokenizer"):
-                    processor.tokenizer.chat_template = GEMMA4_CHAT_TEMPLATE
-                else:
-                    processor.chat_template = GEMMA4_CHAT_TEMPLATE
+        # Gemma4Processor 自带 chat_template，无需手动注入
 
         logger.info(f"Loading model from {model_source}")
 
-        from transformers import AutoModel, AutoModelForCausalLM, AutoModelForMultimodalLM
+        # gemma-4-e4b 使用 Gemma4Processor + Gemma4ForConditionalGeneration (transformers>=5.5)
+        from transformers import Gemma4ForConditionalGeneration, Gemma4Processor
         import torch
 
         load_dtype = torch.float16
         if self.device == "cpu":
             try:
-                # 检查 CPU 是否支持 bfloat16 运算
                 torch.zeros(1, dtype=torch.bfloat16)
                 load_dtype = torch.bfloat16
                 logger.info("CPU supports bfloat16, using it for faster inference")
@@ -124,40 +97,19 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 load_dtype = torch.float32
                 logger.info("CPU does not support bfloat16 natively, using float32")
 
-        # Try loading as the multimodal model first (standard for Gemma 4)
-        try:
-            model = AutoModelForMultimodalLM.from_pretrained(
-                model_source,
-                torch_dtype=load_dtype,
-                trust_remote_code=True,
-                low_cpu_mem_usage=True,
-            )
-            logger.info(f"Loaded model as AutoModelForMultimodalLM with {load_dtype}")
-        except Exception as e:
-            logger.warning(f"AutoModelForMultimodalLM failed ({e}), trying AutoModel")
-            try:
-                model = AutoModel.from_pretrained(
-                    model_source,
-                    torch_dtype=load_dtype,
-                    trust_remote_code=True,
-                    low_cpu_mem_usage=True,
-                )
-                logger.info(f"Loaded model as AutoModel with {load_dtype}")
-            except Exception as e2:
-                logger.warning(f"AutoModel failed ({e2}), falling back to AutoModelForCausalLM")
-                model = AutoModelForCausalLM.from_pretrained(
-                    model_source,
-                    torch_dtype=load_dtype,
-                    trust_remote_code=True,
-                    low_cpu_mem_usage=True,
-                )
-                logger.info(f"Loaded model as AutoModelForCausalLM with {load_dtype}")
+        model = Gemma4ForConditionalGeneration.from_pretrained(
+            model_source,
+            torch_dtype=load_dtype,
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+        )
+        logger.info(f"Loaded model as Gemma4ForConditionalGeneration with {load_dtype}")
         self._model = model
         logger.info("Model loaded successfully, moving to device")
         self._model = self._model.to(self.device)
         self._model.eval()
         self._initialized = True
-        logger.info(f"Model {self.model_name} loaded successfully on {self.device} (float16, ~8GB)")
+        logger.info(f"Model {self.model_name} loaded successfully on {self.device} ({load_dtype}, ~8GB)")
 
     def get_model_name(self) -> str:
         return self.model_name

@@ -25,7 +25,11 @@
       "Bash(pip index *)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(pip show *)",
-      "WebFetch(domain:cdn.jsdelivr.net)"
+      "WebFetch(domain:cdn.jsdelivr.net)",
+      "Bash(python *)",
+      "Bash(pip download *)",
+      "Read(//tmp/**)",
+      "Read(//c/Users/yechuantai/AppData/Local/Temp/tf_test/**)"
     ]
   }
 }
