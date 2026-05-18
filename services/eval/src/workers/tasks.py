@@ -76,25 +76,41 @@ async def _build_callback_json(db, task_id: str, repo: str) -> dict:
     def _str_or_empty(val):
         return val or ""
 
-    def _row_to_dict(row, has_avg=True):
-        """将 repo 级综合评价行转为 {modelScore, avgScore, eva} 字典。"""
-        if not row:
-            return None
-        d = {
-            "modelScore": _float_or_none(row.get("score_model")),
-            "eva": _str_or_empty(row.get("eva_dsc")),
+    def _rule_entry(rule_name, rule_detail, rule_desc, row, has_avg=True):
+        """将 repo 级综合评价行转为 ruleScore 条目。"""
+        entry = {
+            "ruleName": rule_name,
+            "ruleDetail": rule_detail,
+            "ruleDesc": rule_desc,
         }
-        if has_avg:
-            d["avgScore"] = _float_or_none(row.get("score_avg"))
-        return d
+        if row:
+            entry["modelScore"] = _float_or_none(row.get("score_model"))
+            entry["eva"] = _str_or_empty(row.get("eva_dsc"))
+            if has_avg:
+                entry["avgScore"] = _float_or_none(row.get("score_avg"))
+        else:
+            entry["modelScore"] = None
+            entry["eva"] = ""
+            if has_avg:
+                entry["avgScore"] = None
+        return entry
 
-    def _row_to_simple_dict(row):
-        """将 effectiveness / timeliness 行转为 {modelScore, eva} 字典。"""
-        if not row:
-            return None
+    def _simple_rule_entry(rule_name, rule_detail, rule_desc, row):
+        """将 effectiveness / timeliness 行转为 ruleScore 条目。"""
+        if row:
+            return {
+                "ruleName": rule_name,
+                "ruleDetail": rule_detail,
+                "ruleDesc": rule_desc,
+                "modelScore": _float_or_none(row.get("score")),
+                "eva": _str_or_empty(row.get("eva_dsc")),
+            }
         return {
-            "modelScore": _float_or_none(row.get("score")),
-            "eva": _str_or_empty(row.get("eva_dsc")),
+            "ruleName": rule_name,
+            "ruleDetail": rule_detail,
+            "ruleDesc": rule_desc,
+            "modelScore": None,
+            "eva": "",
         }
 
     cond = "repo=$1 AND deleted=0"
@@ -143,35 +159,35 @@ async def _build_callback_json(db, task_id: str, repo: str) -> dict:
     time_row = await db.fetchrow(
         f"SELECT score, eva_dsc FROM repo_timeliness_score WHERE {cond} ORDER BY id DESC LIMIT 1", repo)
 
-    result = {
+    rule_score = [
+        # accuracy
+        _rule_entry("accuracy", "imgContent", "准确性-图像内容准确性检测", img_content_acc),
+        _rule_entry("accuracy", "textContent", "准确性-文本内容准确性检测", text_content_acc),
+        _rule_entry("accuracy", "textFormat", "准确性-文本格式准确性检测", text_format_acc),
+        # consistency
+        _rule_entry("consistency", "imgNoInfoRegion", "完整性-图像无信息区域检测", img_noinfo_con),
+        _rule_entry("consistency", "imgNoise", "完整性-图像无信息噪声检测", img_noise_con),
+        _rule_entry("consistency", "textInfo", "完整性-无信息文本检测", text_noinfo_con),
+        _rule_entry("consistency", "textDesc", "完整性-文本描述完整性检测", text_desc_con),
+        # unique
+        _rule_entry("unique", "innerImage", "唯一性-图内信息唯一性检测", inner_img_unq),
+        _rule_entry("unique", "interImage", "唯一性-图间信息唯一性检测", inter_img_unq, has_avg=False),
+        _rule_entry("unique", "innerText", "唯一性-文本内容唯一性检测", inner_text_unq),
+        _rule_entry("unique", "interText", "唯一性-文本间唯一性检测", inter_text_unq, has_avg=False),
+        # integrity
+        _rule_entry("integrity", "innerImage", "一致性-图像中内容一致性检测", inner_img_int),
+        _rule_entry("integrity", "innerText", "一致性-文本内容描述一致性检测", inner_text_int),
+        _rule_entry("integrity", "interImage", "一致性-图像间一致性检测", inter_img_int, has_avg=False),
+        _rule_entry("integrity", "interText", "一致性-文本文件之间一致性检测", inter_text_int, has_avg=False),
+        # time & effective
+        _simple_rule_entry("time", "time", "及时性检测", time_row),
+        _simple_rule_entry("effictive", "effictive", "有效性检测", eff_row),
+    ]
+
+    return {
         "taskId": task_id,
-        "accuracy": {
-            "imgContent": _row_to_dict(img_content_acc) or {"modelScore": None, "avgScore": None, "eva": ""},
-            "textContent": _row_to_dict(text_content_acc) or {"modelScore": None, "avgScore": None, "eva": ""},
-            "textFormat": _row_to_dict(text_format_acc) or {"modelScore": None, "avgScore": None, "eva": ""},
-        },
-        "consistency": {
-            "imgNoInfoRegion": _row_to_dict(img_noinfo_con) or {"modelScore": None, "avgScore": None, "eva": ""},
-            "imgNoise": _row_to_dict(img_noise_con) or {"modelScore": None, "avgScore": None, "eva": ""},
-            "textInfo": _row_to_dict(text_noinfo_con) or {"modelScore": None, "avgScore": None, "eva": ""},
-            "textDesc": _row_to_dict(text_desc_con) or {"modelScore": None, "avgScore": None, "eva": ""},
-        },
-        "unique": {
-            "innerImage": _row_to_dict(inner_img_unq) or {"modelScore": None, "avgScore": None, "eva": ""},
-            "interImage": _row_to_dict(inter_img_unq, has_avg=False) or {"modelScore": None, "eva": ""},
-            "innerText": _row_to_dict(inner_text_unq) or {"modelScore": None, "avgScore": None, "eva": ""},
-            "interText": _row_to_dict(inter_text_unq, has_avg=False) or {"modelScore": None, "eva": ""},
-        },
-        "integrity": {
-            "innerImage": _row_to_dict(inner_img_int) or {"modelScore": None, "avgScore": None, "eva": ""},
-            "innerText": _row_to_dict(inner_text_int) or {"modelScore": None, "avgScore": None, "eva": ""},
-            "interImage": _row_to_dict(inter_img_int, has_avg=False) or {"modelScore": None, "eva": ""},
-            "interText": _row_to_dict(inter_text_int, has_avg=False) or {"modelScore": None, "eva": ""},
-        },
-        "time": _row_to_simple_dict(time_row) or {"modelScore": None, "eva": ""},
-        "effictive": _row_to_simple_dict(eff_row) or {"modelScore": None, "eva": ""},
+        "ruleScore": rule_score,
     }
-    return result
 
 
 def _do_callback(task_id: str, callback_json: dict):
