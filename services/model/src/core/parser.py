@@ -13,10 +13,13 @@ class SuperParser:
     @staticmethod
     def parse_json_response(text: str) -> dict:
         """
-        超级增强版 2.0.2：
+        超级增强版 3.0:
         1. 采用栈式括号匹配提取所有顶级 JSON 对象。
-        2. 针对“复读 Prompt”的情况进行过滤。
-        3. 优先寻找命中维度关键词 (accuracy, uniqueness等) 的结构。
+        2. 智能识别单维度 vs 多维度输出:
+           - 单维度: {"score": 95.76, "eva_content": "..."} -> 直接提取
+           - 多维度: {"accuracy": {"score": 76, ...}, ...} -> 按维度标准化
+        3. 针对"复读 Prompt"的情况进行过滤。
+        4. 优先寻找命中维度关键词 (accuracy, uniqueness等) 的结构。
         """
         if not text:
             return {}
@@ -37,7 +40,6 @@ class SuperParser:
 
         def extract_json_structures(s):
             results = []
-            # 寻找所有的 { 和 [ 开启点
             starts = [i for i, c in enumerate(s) if c in '{[']
             for start in starts:
                 opening = s[start]
@@ -53,9 +55,8 @@ class SuperParser:
                             try:
                                 obj = json.loads(content)
                                 results.append(obj)
-                                # 找到一个后不再深入其内部寻找 start，但可以继续寻找并列的 start
                                 break
-                            except:
+                            except Exception:
                                 pass
             return results
 
@@ -66,13 +67,13 @@ class SuperParser:
         if not potential_objects:
             potential_objects = extract_json_structures(cleaned)
 
-        # 3. 标准化逻辑
-        final_result = {}
-
         # 维度关键词
-        DIM_KEYS = ("accuracy", "uniqueness", "consistency", "noinfo", "noise", "completeness", "temporal", "visual", "format", "content")
+        DIM_KEYS = ("accuracy", "uniqueness", "consistency", "noinfo", "noise",
+                     "completeness", "temporal", "visual", "format", "content",
+                     "integrity", "effective")
 
         def normalize_val(v):
+            """将任意值标准化为 {"score": float, "eva_content": str} 结构。"""
             if isinstance(v, (int, float)):
                 return {"score": float(v), "eva_content": ""}
             if isinstance(v, dict):
@@ -80,34 +81,77 @@ class SuperParser:
                 for k, sub_v in v.items():
                     kl = k.lower()
                     if kl == "score":
-                        try: res["score"] = float(sub_v)
-                        except: pass
+                        try:
+                            res["score"] = float(sub_v)
+                        except (ValueError, TypeError):
+                            pass
                     elif kl in ("eva_content", "evacontent", "description", "eva"):
                         res["eva_content"] = str(sub_v)
-
-                # 处理嵌套
+                # 处理嵌套 dict (值本身是 {"score": ..., "eva_content": ...})
                 if res["score"] < 0 and len(v) == 1:
                     inner_v = list(v.values())[0]
                     if isinstance(inner_v, dict):
                         return normalize_val(inner_v)
-
-                if res["score"] < 0: res["score"] = 0.0
+                if res["score"] < 0:
+                    res["score"] = 0.0
                 return res
             return {"score": 0.0, "eva_content": str(v)}
 
-        # 4. 合并与过滤
+        def is_flat_score_dict(obj: dict) -> bool:
+            """判断是否是单维度平铺格式, 如 {"score": 95.76, "eva_content": "..."}。
+            特征: 包含 score 键且值为数字, 或包含 eva_content 且值为字符串。
+            """
+            has_numeric_score = any(
+                k.lower() == "score" and isinstance(v, (int, float))
+                for k, v in obj.items()
+            )
+            has_string_eva = any(
+                k.lower() in ("eva_content", "evacontent", "description", "eva")
+                and isinstance(v, str)
+                for k, v in obj.items()
+            )
+            return has_numeric_score or has_string_eva
+
+        # 3. 解析提取到的 JSON 对象
+        final_result = {}
+
         for obj in potential_objects:
             if isinstance(obj, list):
                 for item in obj:
                     if isinstance(item, dict):
-                        # 处理 [{"name": "xxx", "value": 90}]
                         name = str(item.get("name", item.get("Name", "unknown"))).lower()
                         val = item.get("value", item.get("Value", item))
-                        # 过滤掉复读 prompt 的 item (如果 score 为 0 且 description 很长)
                         norm = normalize_val(val)
                         if norm["score"] > 0 or len(norm["eva_content"]) < 100:
                             final_result[name] = norm
             elif isinstance(obj, dict):
+                # 单维度平铺格式: {"score": 95.76, "eva_content": "..."}
+                # 直接提取 score 和 eva_content, 不做维度拆分
+                if is_flat_score_dict(obj):
+                    flat = {}
+                    for k, v in obj.items():
+                        kl = k.lower()
+                        if kl == "score" and isinstance(v, (int, float)):
+                            flat["score"] = float(v)
+                        elif kl in ("eva_content", "evacontent", "description", "eva") and isinstance(v, str):
+                            flat["eva_content"] = v
+                    if "score" not in flat:
+                        flat["score"] = 0.0
+                    if "eva_content" not in flat:
+                        flat["eva_content"] = ""
+                    # 保留其他维度字段
+                    for k, v in obj.items():
+                        kl = k.lower()
+                        if kl not in ("score", "eva_content", "evacontent", "description", "eva"):
+                            final_result[kl] = normalize_val(v)
+                    # score/eva_content 不覆盖已有的维度结果
+                    if "score" not in final_result:
+                        final_result["score"] = flat["score"]
+                    if "eva_content" not in final_result:
+                        final_result["eva_content"] = flat["eva_content"]
+                    continue
+
+                # 多维度格式: {"accuracy": {"score": 76, ...}, "noinfo": {...}, ...}
                 for k, v in obj.items():
                     kl = k.lower()
                     # 过滤明显的规则定义项
@@ -115,12 +159,12 @@ class SuperParser:
                         continue
                     final_result[kl] = normalize_val(v)
 
-        # 5. 兜底正则
+        # 4. 兜底正则
         if not final_result:
             for m in re.finditer(r'"(\w+)":\s*(?:\{[^{}]*)?"score":\s*([\d.]+)', cleaned, re.I):
                 final_result[m.group(1).lower()] = {"score": float(m.group(2)), "eva_content": ""}
 
-        # 6. 兼容性总分
+        # 5. 兼容性总分
         if "score" not in final_result and final_result:
             best_key = next((k for k in final_result if any(dk in k for dk in DIM_KEYS)), list(final_result.keys())[0])
             final_result["score"] = final_result[best_key]
