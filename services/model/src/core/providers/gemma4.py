@@ -110,7 +110,6 @@ class Gemma4EvalProvider(BaseEvalProvider):
 
         logger.info(f"Loading model from {model_source}")
 
-        # gemma-4-e4b is a multimodal vision-language model.
         from transformers import AutoModel, AutoModelForCausalLM, AutoModelForMultimodalLM
         import torch
 
@@ -134,7 +133,7 @@ class Gemma4EvalProvider(BaseEvalProvider):
                 low_cpu_mem_usage=True,
             )
             logger.info(f"Loaded model as AutoModelForMultimodalLM with {load_dtype}")
-        except (Exception, ImportError) as e:
+        except Exception as e:
             logger.warning(f"AutoModelForMultimodalLM failed ({e}), trying AutoModel")
             try:
                 model = AutoModel.from_pretrained(
