@@ -58,8 +58,9 @@ class EvaluationCoordinator:
     Coordinates the multi-dimensional evaluation of a repository.
     Provides a deep interface for file discovery, multimodal analysis, and database persistence.
     """
-    def __init__(self, db: Database, loop: asyncio.AbstractEventLoop):
+    def __init__(self, db: Database, redis_client: any, loop: asyncio.AbstractEventLoop):
         self.db = db
+        self.redis = redis_client
         self.loop = loop
         self.gitea = GiteaClient()
         self.ledger = QualityLedger(db, loop)
@@ -76,37 +77,56 @@ class EvaluationCoordinator:
 
     async def evaluate_resource(self, task_id: str, user_name: str, repo_name: str, branch_name: str, repo_introduction: str):
         repo = f"{user_name}/{repo_name}"
+        lock_key = f"lock:eval:{repo}"
         
-        await self.ledger.clear_repo_history(user_name, repo_name)
-
-        all_files = self.gitea.dfs_traverse_repo(user_name, repo_name, branch_name)
-        if not all_files:
-            logger.warning(f"No files found in {repo}@{branch_name}")
-            await self._update_task_progress(task_id, 0, 0)
+        # Acquire distributed lock
+        redis = await self.redis.get_client()
+        # Set lock with 1 hour timeout as safeguard
+        if not await redis.set(lock_key, task_id, ex=3600, nx=True):
+            logger.warning(f"Task {task_id} skipped: Repo {repo} is already being evaluated by another task.")
+            await self.db.execute("UPDATE eval_tasks SET status=$1, error_message=$2 WHERE task_id=$3", 
+                                 EvalStatus.FAILED.value, "Repo already being evaluated by another task.", task_id)
             return
 
-        image_files = [f for f in all_files if is_image_file(f["path"])]
-        text_files = [f for f in all_files if is_text_file(f["path"])]
-        video_files = [f for f in all_files if is_video_file(f["path"])]
-        
-        self.image_shas = [f["sha"] for f in image_files if f.get("sha")]
-        self.text_shas = [f["sha"] for f in text_files if f.get("sha")]
-        
-        total_count = len(image_files) + len(text_files) + len(video_files)
-        await self._update_task_progress(task_id, total_count, 0)
+        try:
+            await self.ledger.clear_repo_history(user_name, repo_name)
 
-        # Compute dataset-wide uniqueness scores early
-        self.img_dataset_unq = compute_dataset_uniqueness(self.image_shas)
-        self.txt_dataset_unq = compute_dataset_uniqueness(self.text_shas)
+            all_files = self.gitea.dfs_traverse_repo(user_name, repo_name, branch_name)
+            if not all_files:
+                logger.warning(f"No files found in {repo}@{branch_name}")
+                await self._update_task_progress(task_id, 0, 0)
+                return
 
-        await self._process_images(task_id, user_name, repo_name, branch_name, image_files)
-        await self._process_texts(task_id, user_name, repo_name, branch_name, text_files)
-        await self._process_videos(task_id, user_name, repo_name, branch_name, video_files)
+            image_files = [f for f in all_files if is_image_file(f["path"])]
+            text_files = [f for f in all_files if is_text_file(f["path"])]
+            video_files = [f for f in all_files if is_video_file(f["path"])]
+            
+            self.image_shas = [f["sha"] for f in image_files if f.get("sha")]
+            self.text_shas = [f["sha"] for f in text_files if f.get("sha")]
+            
+            total_count = len(image_files) + len(text_files) + len(video_files)
+            await self._update_task_progress(task_id, total_count, 0)
 
-        await self._do_repo_evaluation(repo, repo_introduction, image_files, text_files, video_files)
-        await self._finalize_aggregation(task_id, user_name, repo_name, branch_name)
+            # Compute dataset-wide uniqueness scores early
+            self.img_dataset_unq = compute_dataset_uniqueness(self.image_shas)
+            self.txt_dataset_unq = compute_dataset_uniqueness(self.text_shas)
 
-        logger.info(f"Evaluation task {task_id} completed: {len(image_files)} images, {len(text_files)} texts, {len(video_files)} videos")
+            await self._process_images(task_id, user_name, repo_name, branch_name, image_files)
+            await self._process_texts(task_id, user_name, repo_name, branch_name, text_files)
+            await self._process_videos(task_id, user_name, repo_name, branch_name, video_files)
+
+            try:
+                await self._do_repo_evaluation(repo, repo_introduction, image_files, text_files, video_files)
+                await self._finalize_aggregation(task_id, user_name, repo_name, branch_name)
+            except Exception as e:
+                logger.error(f"Repo evaluation/aggregation failed: {e}")
+
+            logger.info(f"Evaluation task {task_id} completed: {len(image_files)} images, {len(text_files)} texts, {len(video_files)} videos")
+        finally:
+            # Release lock only if we own it
+            current_task = await redis.get(lock_key)
+            if current_task and current_task.decode() == task_id:
+                await redis.delete(lock_key)
 
     async def _finalize_aggregation(self, task_id, user_name, repo_name, branch_name):
         """汇总全数据集指标并存入 eval_aggregate_results。"""

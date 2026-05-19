@@ -36,6 +36,7 @@ class OpenVINOGemmaEvalProvider(BaseEvalProvider):
         self._pipe = None
         self._tokenizer = None
         self._initialized = False
+        self._infer_lock = asyncio.Lock()
 
     def _init_model(self):
         if self._initialized:
@@ -136,49 +137,51 @@ class OpenVINOGemmaEvalProvider(BaseEvalProvider):
         import numpy as np
         import openvino as ov
 
-        def _eval():
-            self._init_model()
-            image_bytes = base64.b64decode(image_base64)
-            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            
-            # Ensure minimum size of 28x28 as required by Qwen2-VL
-            w, h = image.size
-            if w < 28 or h < 28:
-                new_w = max(w, 28)
-                new_h = max(h, 28)
-                image = image.resize((new_w, new_h), Image.LANCZOS)
-                logger.info(f"Resized small image from {w}x{h} to {new_w}x{new_h}")
-            
-            # Ensure maximum size for performance
-            max_size = getattr(settings, "max_image_size", 384)
-            if max(image.size) > max_size:
-                image.thumbnail((max_size, max_size), Image.LANCZOS)
-                logger.info(f"Resized large image to {image.size} for faster inference")
+        async with self._infer_lock:
+            def _eval():
+                self._init_model()
+                image_bytes = base64.b64decode(image_base64)
+                image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                
+                # Ensure minimum size of 28x28 as required by Qwen2-VL
+                w, h = image.size
+                if w < 28 or h < 28:
+                    new_w = max(w, 28)
+                    new_h = max(h, 28)
+                    image = image.resize((new_w, new_h), Image.LANCZOS)
+                    logger.info(f"Resized small image from {w}x{h} to {new_w}x{new_h}")
+                
+                # Ensure maximum size for performance
+                max_size = getattr(settings, "max_image_size", 384)
+                if max(image.size) > max_size:
+                    image.thumbnail((max_size, max_size), Image.LANCZOS)
+                    logger.info(f"Resized large image to {image.size} for faster inference")
 
-            # Apply chat template
-            formatted_prompt = self._render_chat_template(prompt)
+                # Apply chat template
+                formatted_prompt = self._render_chat_template(prompt)
 
-            # Convert PIL to OpenVINO Tensor
-            image_data = np.array(image)
-            ov_tensor = ov.Tensor(image_data)
-            
-            logger.info(f"Running GenAI inference with formatted prompt: {formatted_prompt[:100]}...")
-            # Note: GenAI VLMPipeline generate takes prompt and image(s)
-            output = self._pipe.generate(formatted_prompt, image=ov_tensor, max_new_tokens=512, do_sample=False)
-            return str(output)
+                # Convert PIL to OpenVINO Tensor
+                image_data = np.array(image)
+                ov_tensor = ov.Tensor(image_data)
+                
+                logger.info(f"Running GenAI inference with formatted prompt: {formatted_prompt[:100]}...")
+                # Note: GenAI VLMPipeline generate takes prompt and image(s)
+                output = self._pipe.generate(formatted_prompt, image=ov_tensor, max_new_tokens=512, do_sample=False)
+                return str(output)
 
-        return await asyncio.to_thread(_eval)
+            return await asyncio.to_thread(_eval)
 
     async def _evaluate_text_inner(self, full_text: str) -> str:
-        def _eval():
-            self._init_model()
-            # Apply chat template
-            formatted_prompt = self._render_chat_template(full_text)
-            # VLMPipeline handles text-only prompts fine
-            output = self._pipe.generate(formatted_prompt, max_new_tokens=512, do_sample=False)
-            return str(output)
+        async with self._infer_lock:
+            def _eval():
+                self._init_model()
+                # Apply chat template
+                formatted_prompt = self._render_chat_template(full_text)
+                # VLMPipeline handles text-only prompts fine
+                output = self._pipe.generate(formatted_prompt, max_new_tokens=512, do_sample=False)
+                return str(output)
 
-        return await asyncio.to_thread(_eval)
+            return await asyncio.to_thread(_eval)
 
     async def _evaluate_video(self, video_frames: list[str], prompt: str) -> str:
         import base64
@@ -187,32 +190,33 @@ class OpenVINOGemmaEvalProvider(BaseEvalProvider):
         import numpy as np
         import openvino as ov
 
-        def _eval():
-            self._init_model()
-            tensors = []
-            max_size = getattr(settings, "max_image_size", 384)
-            for b64 in video_frames:
-                img_bytes = base64.b64decode(b64)
-                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-                
-                # Ensure minimum size
-                w, h = img.size
-                if w < 28 or h < 28:
-                    new_w = max(w, 28)
-                    new_h = max(h, 28)
-                    img = img.resize((new_w, new_h), Image.LANCZOS)
-                
-                # Ensure maximum size
-                if max(img.size) > max_size:
-                    img.thumbnail((max_size, max_size), Image.LANCZOS)
-                
-                tensors.append(ov.Tensor(np.array(img)))
+        async with self._infer_lock:
+            def _eval():
+                self._init_model()
+                tensors = []
+                max_size = getattr(settings, "max_image_size", 384)
+                for b64 in video_frames:
+                    img_bytes = base64.b64decode(b64)
+                    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                    
+                    # Ensure minimum size
+                    w, h = img.size
+                    if w < 28 or h < 28:
+                        new_w = max(w, 28)
+                        new_h = max(h, 28)
+                        img = img.resize((new_w, new_h), Image.LANCZOS)
+                    
+                    # Ensure maximum size
+                    if max(img.size) > max_size:
+                        img.thumbnail((max_size, max_size), Image.LANCZOS)
+                    
+                    tensors.append(ov.Tensor(np.array(img)))
 
-            # Apply chat template
-            formatted_prompt = self._render_chat_template(prompt)
+                # Apply chat template
+                formatted_prompt = self._render_chat_template(prompt)
 
-            # VLMPipeline.generate supports a list of images (treated as video frames)
-            output = self._pipe.generate(formatted_prompt, images=tensors, max_new_tokens=512, do_sample=False)
-            return str(output)
+                # VLMPipeline.generate supports a list of images (treated as video frames)
+                output = self._pipe.generate(formatted_prompt, images=tensors, max_new_tokens=512, do_sample=False)
+                return str(output)
 
-        return await asyncio.to_thread(_eval)
+            return await asyncio.to_thread(_eval)

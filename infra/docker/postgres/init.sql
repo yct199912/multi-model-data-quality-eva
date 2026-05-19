@@ -160,7 +160,8 @@ CREATE TABLE IF NOT EXISTS repo_effectiveness_score (
     eva_dsc     TEXT,
     eva_type    VARCHAR(30) NOT NULL DEFAULT 'repo-effectiveness',
     deleted     INT2 DEFAULT 0,
-    created_at  TIMESTAMPTZ DEFAULT NOW()
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (repo, eva_type)
 );
 
 CREATE INDEX idx_effectiveness_repo ON repo_effectiveness_score(repo);
@@ -175,7 +176,8 @@ CREATE TABLE IF NOT EXISTS repo_timeliness_score (
     eva_dsc     TEXT,
     eva_type    VARCHAR(30) NOT NULL DEFAULT 'repo-timeliness',
     deleted     INT2 DEFAULT 0,
-    created_at  TIMESTAMPTZ DEFAULT NOW()
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (repo, eva_type)
 );
 
 CREATE INDEX idx_timeliness_repo ON repo_timeliness_score(repo);
@@ -192,7 +194,8 @@ CREATE TABLE IF NOT EXISTS repo_unq_score (
     eva_rule_type   VARCHAR(100) NOT NULL,    -- inter-image-unq / inter-text-unq / imgself-unq / textself-unq
     score_avg       NUMERIC(10, 2),          -- 所有文件该维度平均分
     score           NUMERIC(10, 2),           -- 加权得分
-    created_at      TIMESTAMPTZ DEFAULT NOW()
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (repo, eva_rule_type)
 );
 
 CREATE INDEX idx_repo_unq_repo ON repo_unq_score(repo);
@@ -210,7 +213,8 @@ CREATE TABLE IF NOT EXISTS repo_integrity_score (
     eva_rule_type   VARCHAR(100) NOT NULL,   -- inter-image-integrity / inter-text-integrity / imgself-integrity / textself-integrity
     score_avg       NUMERIC(10, 2),          -- 所有文件该维度平均分
     score           NUMERIC(10, 2),           -- 加权得分
-    created_at      TIMESTAMPTZ DEFAULT NOW()
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (repo, eva_rule_type)
 );
 
 CREATE INDEX idx_repo_integrity_repo ON repo_integrity_score(repo);
@@ -228,7 +232,8 @@ CREATE TABLE IF NOT EXISTS repo_accuracy_score (
     eva_rule_type   VARCHAR(100) NOT NULL,   -- imgself-accuracy / textself-accuracy-format / textself-accuracy-content
     score_avg       NUMERIC(10, 2),          -- 所有文件该维度平均分
     score           NUMERIC(10, 2),           -- 加权得分
-    created_at      TIMESTAMPTZ DEFAULT NOW()
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (repo, eva_rule_type)
 );
 
 CREATE INDEX idx_repo_accuracy_repo ON repo_accuracy_score(repo);
@@ -246,7 +251,8 @@ CREATE TABLE IF NOT EXISTS repo_consistency_score (
     eva_rule_type   VARCHAR(100) NOT NULL,   -- imgself-consistency-region / imgself-consistency-noise / textself-consistency-noinfo / textself-consistency-content
     score_avg       NUMERIC(10, 2),          -- 所有文件该维度平均分
     score           NUMERIC(10, 2),           -- 加权得分
-    created_at      TIMESTAMPTZ DEFAULT NOW()
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (repo, eva_rule_type)
 );
 
 CREATE INDEX idx_repo_consistency_repo ON repo_consistency_score(repo);

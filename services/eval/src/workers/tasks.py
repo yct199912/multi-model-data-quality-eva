@@ -13,35 +13,31 @@ from retrieval_shared.constants import (
     SCORE_TABLE_REPO_ACCURACY, SCORE_TABLE_REPO_CONSISTENCY,
 )
 from retrieval_shared.database import Database
-from ..config import settings
-from .celery_app import celery_app
+from ..dependencies import db, redis_client
 from ..core.coordinator import EvaluationCoordinator
 
 logger = logging.getLogger(__name__)
-
-
-def _get_db():
-    return Database(settings.postgres_dsn)
 
 
 @celery_app.task(bind=True, max_retries=1, default_retry_delay=30)
 def run_evaluation(self, evaluate_id: int, task_id: str, user_name: str, repo_name: str,
                    branch_name: str, repo_introduction: str):
     """核心评价任务。"""
-    db = _get_db()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(db.connect())
+        loop.run_until_complete(redis_client.connect())
         loop.run_until_complete(
             db.execute(
                 "UPDATE eval_tasks SET status=$1, started_at=NOW() WHERE task_id=$2",
                 EvalStatus.RUNNING.value, task_id,
             )
         )
-        
-        coordinator = EvaluationCoordinator(db, loop)
+
+        coordinator = EvaluationCoordinator(db, redis_client, loop)
         loop.run_until_complete(coordinator.evaluate_resource(task_id, user_name, repo_name, branch_name, repo_introduction))
+
 
         # 评价完成后构建 JSON 并发送回调
         repo = f"{user_name}/{repo_name}"
@@ -65,6 +61,7 @@ def run_evaluation(self, evaluate_id: int, task_id: str, user_name: str, repo_na
         raise self.retry(exc=e, countdown=30 * (self.request.retries + 1))
     finally:
         loop.run_until_complete(db.disconnect())
+        loop.run_until_complete(redis_client.disconnect())
         loop.close()
 
 

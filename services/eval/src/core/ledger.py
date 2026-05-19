@@ -75,21 +75,31 @@ class QualityLedger:
         )
 
     async def record_repo_score(self, table: str, repo: str, score: float, eva_dsc: str, eva_type: str = None):
-        if eva_type:
-            await self.db.execute(f"INSERT INTO {table} (repo, score, eva_dsc, eva_type) VALUES ($1, $2, $3, $4)", repo, round(score, 2), eva_dsc, eva_type)
-        else:
-            await self.db.execute(f"INSERT INTO {table} (repo, score, eva_dsc) VALUES ($1, $2, $3)", repo, round(score, 2), eva_dsc)
+        if not eva_type:
+            # Fallback to default eva_type based on table name
+            if table == SCORE_TABLE_REPO_EFFECTIVENESS: eva_type = 'repo-effectiveness'
+            elif table == SCORE_TABLE_REPO_TIMELINESS: eva_type = 'repo-timeliness'
+        
+        query = f"""INSERT INTO {table} (repo, score, eva_dsc, eva_type)
+                   VALUES ($1, $2, $3, $4)
+                   ON CONFLICT (repo, eva_type) DO UPDATE SET
+                   score=EXCLUDED.score, eva_dsc=EXCLUDED.eva_dsc, deleted=0
+                """
+        await self.db.execute(query, repo, round(score, 2), eva_dsc, eva_type)
 
     async def update_or_insert_repo_self_score(self, table: str, repo: str, score_model: float, eva_dsc: str, eva_rule_type: str, score_avg: Optional[float] = None, score: Optional[float] = None):
-        status = await self.db.execute(
-            f"UPDATE {table} SET score_model=$1, eva_dsc=$2, score_avg=$3, score=$4 WHERE repo=$5 AND eva_rule_type=$6",
-            round(score_model, 2), eva_dsc, round(score_avg, 2) if score_avg is not None else None, round(score, 2) if score is not None else None, repo, eva_rule_type,
+        query = f"""INSERT INTO {table} (repo, score_model, eva_dsc, eva_rule_type, score_avg, score)
+                   VALUES ($1, $2, $3, $4, $5, $6)
+                   ON CONFLICT (repo, eva_rule_type) DO UPDATE SET
+                   score_model=EXCLUDED.score_model, eva_dsc=EXCLUDED.eva_dsc, 
+                   score_avg=EXCLUDED.score_avg, score=EXCLUDED.score,
+                   deleted=0
+                """
+        await self.db.execute(
+            query, repo, round(score_model, 2), eva_dsc, eva_rule_type, 
+            round(score_avg, 2) if score_avg is not None else None, 
+            round(score, 2) if score is not None else None
         )
-        if status and status.startswith("UPDATE 0"):
-            await self.db.execute(
-                f"INSERT INTO {table} (repo, score_model, eva_dsc, eva_rule_type, score_avg, score) VALUES ($1, $2, $3, $4, $5, $6)",
-                repo, round(score_model, 2), eva_dsc, eva_rule_type, round(score_avg, 2) if score_avg is not None else None, round(score, 2) if score is not None else None,
-            )
 
     async def get_avg_score(self, table: str, repo: str, eva_type: str, file_type: str = None) -> float:
         if file_type:
