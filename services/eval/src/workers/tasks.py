@@ -41,7 +41,7 @@ def run_evaluation(self, evaluate_id: int, task_id: str, user_name: str, repo_na
         )
         
         coordinator = EvaluationCoordinator(db, loop)
-        coordinator.evaluate_resource(task_id, user_name, repo_name, branch_name, repo_introduction)
+        loop.run_until_complete(coordinator.evaluate_resource(task_id, user_name, repo_name, branch_name, repo_introduction))
 
         # 评价完成后构建 JSON 并发送回调
         repo = f"{user_name}/{repo_name}"
@@ -115,6 +115,9 @@ async def _build_callback_json(db, task_id: str, eva_id: int, repo: str) -> dict
 
     cond = "repo=$1 AND deleted=0"
 
+    # Fetch aggregate result for the task
+    agg_row = await db.fetchrow("SELECT * FROM eval_aggregate_results WHERE task_id=$1", uuid.UUID(task_id))
+
     # accuracy (repo_accuracy_score)
     img_content_acc = await db.fetchrow(
         f"SELECT score_model, score_avg, eva_dsc FROM repo_accuracy_score WHERE eva_rule_type='imgself-accuracy' AND {cond}", repo)
@@ -133,7 +136,7 @@ async def _build_callback_json(db, task_id: str, eva_id: int, repo: str) -> dict
     text_desc_con = await db.fetchrow(
         f"SELECT score_model, score_avg, eva_dsc FROM repo_consistency_score WHERE eva_rule_type='textself-consistency-content' AND {cond}", repo)
 
-    # uniqueness (repo_unq_score) — imgself/textself have avgScore, inter- ones don't
+    # uniqueness (repo_unq_score)
     inner_img_unq = await db.fetchrow(
         f"SELECT score_model, score_avg, eva_dsc FROM repo_unq_score WHERE eva_rule_type='imgself-unq' AND {cond}", repo)
     inner_text_unq = await db.fetchrow(
@@ -143,7 +146,7 @@ async def _build_callback_json(db, task_id: str, eva_id: int, repo: str) -> dict
     inter_text_unq = await db.fetchrow(
         f"SELECT score_model, eva_dsc FROM repo_unq_score WHERE eva_rule_type='inter-text-unq' AND {cond}", repo)
 
-    # integrity (repo_integrity_score) — imgself/textself have avgScore, inter- ones don't
+    # integrity (repo_integrity_score)
     inner_img_int = await db.fetchrow(
         f"SELECT score_model, score_avg, eva_dsc FROM repo_integrity_score WHERE eva_rule_type='imgself-integrity' AND {cond}", repo)
     inner_text_int = await db.fetchrow(
@@ -159,6 +162,23 @@ async def _build_callback_json(db, task_id: str, eva_id: int, repo: str) -> dict
     time_row = await db.fetchrow(
         f"SELECT score, eva_dsc FROM repo_timeliness_score WHERE {cond} ORDER BY id DESC LIMIT 1", repo)
 
+    # Use aggregated scores from eval_aggregate_results if available
+    img_unq_final = inner_img_unq
+    if agg_row and agg_row["image_uniqueness_score"] is not None:
+        img_unq_final = {"score_model": float(agg_row["image_uniqueness_score"]), "eva_dsc": agg_row["image_uniqueness_description"]}
+    
+    text_unq_final = inner_text_unq
+    if agg_row and agg_row["text_uniqueness_score"] is not None:
+        text_unq_final = {"score_model": float(agg_row["text_uniqueness_score"]), "eva_dsc": agg_row["text_uniqueness_description"]}
+
+    img_int_final = inner_img_int
+    if agg_row and agg_row["image_completeness_score"] is not None:
+        img_int_final = {"score_model": float(agg_row["image_completeness_score"]), "eva_dsc": "综合完整性评分"}
+
+    text_int_final = inner_text_int
+    if agg_row and agg_row["text_completeness_score"] is not None:
+        text_int_final = {"score_model": float(agg_row["text_completeness_score"]), "eva_dsc": "综合完整性评分"}
+
     rule_score = [
         # accuracy
         _rule_entry("accurate", "imgContent", "准确性-图像内容准确性检测", img_content_acc),
@@ -170,13 +190,13 @@ async def _build_callback_json(db, task_id: str, eva_id: int, repo: str) -> dict
         _rule_entry("integrity", "textInfo", "完整性-无信息文本检测", text_noinfo_con),
         _rule_entry("integrity", "textDesc", "完整性-文本描述完整性检测", text_desc_con),
         # unique
-        _rule_entry("unique", "innerImage", "唯一性-图内信息唯一性检测", inner_img_unq),
+        _rule_entry("unique", "innerImage", "唯一性-图内信息唯一性检测", img_unq_final),
         _rule_entry("unique", "interImage", "唯一性-图间信息唯一性检测", inter_img_unq, has_avg=False),
-        _rule_entry("unique", "innerText", "唯一性-文本内容唯一性检测", inner_text_unq),
+        _rule_entry("unique", "innerText", "唯一性-文本内容唯一性检测", text_unq_final),
         _rule_entry("unique", "interText", "唯一性-文本间唯一性检测", inter_text_unq, has_avg=False),
         # integrity
-        _rule_entry("consistent", "innerImage", "一致性-图像中内容一致性检测", inner_img_int),
-        _rule_entry("consistent", "innerText", "一致性-文本内容描述一致性检测", inner_text_int),
+        _rule_entry("consistent", "innerImage", "一致性-图像中内容一致性检测", img_int_final),
+        _rule_entry("consistent", "innerText", "一致性-文本内容描述一致性检测", text_int_final),
         _rule_entry("consistent", "interImage", "一致性-图像间一致性检测", inter_img_int, has_avg=False),
         _rule_entry("consistent", "interText", "一致性-文本文件之间一致性检测", inter_text_int, has_avg=False),
         # time & effective
