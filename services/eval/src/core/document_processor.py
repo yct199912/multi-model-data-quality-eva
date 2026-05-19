@@ -98,7 +98,7 @@ def extract_text_from_pdf(content_bytes: bytes) -> str:
     """从 .pdf 文件提取文本。"""
     try:
         from pypdf import PdfReader
-        reader = pypdf.PdfReader(io.BytesIO(content_bytes))
+        reader = PdfReader(io.BytesIO(content_bytes))
         text_parts = []
         for page in reader.pages:
             text_parts.append(page.extract_text())
