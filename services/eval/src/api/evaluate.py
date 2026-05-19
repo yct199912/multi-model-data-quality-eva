@@ -49,8 +49,8 @@ async def create_evaluation(
 
     # 派发 Celery 异步任务
     try:
-        run_evaluation.apply_async(args=(req.evaluateId, task_id, req.userName, req.repoName, branch, req.repoIntroduction), queue="eval")
-        logger.info(f"Dispatched eval task {task_id} for {req.userName}/{req.repoName}@{branch}")
+        run_evaluation.apply_async(args=(req.evaluateId, task_id, req.userName, req.repoName, branch, req.repoIntroduction), queue="eval_kratos")
+        logger.info(f"Dispatched eval task {task_id} for {req.userName}/{req.repoName}@{branch} to queue eval_kratos")
     except Exception as e:
         logger.error(f"Failed to dispatch Celery task: {e}")
         # Celery 不可用时仍然返回 task_id，前端可轮询

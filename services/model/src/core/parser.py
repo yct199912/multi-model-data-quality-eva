@@ -151,7 +151,6 @@ class SuperParser:
                         final_result["eva_content"] = flat["eva_content"]
                     continue
 
-                # 多维度格式: {"accuracy": {"score": 76, ...}, "noinfo": {...}, ...}
                 for k, v in obj.items():
                     kl = k.lower()
                     # 过滤明显的规则定义项
